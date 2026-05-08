@@ -56,8 +56,7 @@ Your task:
    value is used in the method body.
 3. Identify any dereferences that are unsafe if a value is @Nullable (i.e., spots
    that need a null check or precondition), cross-referencing the NullAway warnings.
-4. Produce a corrected version of the code with all annotations applied and any
-   necessary null checks added.
+4. Produce a corrected version of the code with all annotations applied.
 
 Provide your response in three sections:
 A) Annotation decisions (table: location | inferred annotation | reason)
