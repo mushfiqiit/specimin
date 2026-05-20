@@ -21,6 +21,7 @@ import sys
 import time
 import shutil
 import pathlib
+from AddNonnullImport import ensure_imports
 from groq import Groq
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
@@ -129,7 +130,10 @@ FILE_MARKER = re.compile(r"^// === (.+?) ===$", re.MULTILINE)
 
 
 def extract_section_c(report: str) -> str:
-    match = re.search(r"##\s*C\).*?```java\s*(.*?)```", report, re.DOTALL | re.IGNORECASE)
+    match = re.search(
+        r"(?:##\s*C\)|###\s*Corrected\s+Annotated\s+Code).*?```java\s*(.*?)```",
+        report, re.DOTALL | re.IGNORECASE
+    )
     if not match:
         raise ValueError("Could not find Section C corrected code block in the report.")
     return match.group(1)
@@ -168,6 +172,7 @@ def reconstruct(source_folder: pathlib.Path, report: str) -> None:
         dest = output_dir / relative_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content + "\n", encoding="utf-8")
+        dest.write_text(ensure_imports(content) + "\n", encoding="utf-8")
         print(f"    [patched]  {relative_path}")
 
     patched_set = set(patched_files.keys())

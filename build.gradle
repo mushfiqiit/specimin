@@ -192,3 +192,7 @@ sourceSets {
         java.srcDirs = ["src/main/java/", "src/test/java/"]
     }
 }
+
+dependencies {
+    implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.27.1'
+}
