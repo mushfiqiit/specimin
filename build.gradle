@@ -173,6 +173,24 @@ javadoc {
     }
 }
 
+// Applies @Nullable/@Nonnull from LLMInferenced specimin-out folders to original EventBus source.
+// Override paths with -PspeciminOut=<path> -PeventbusSrc=<path> if needed.
+tasks.register("applyAnnotations", JavaExec) {
+    dependsOn("compileJava")
+    group = "nullaway"
+    description = "Transfers inferred null annotations from LLMInferenced folders to EventBus source."
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "org.checkerframework.specimin.nullaway.ApplyAnnotations"
+    args = [
+        "--specimin-out",
+        project.findProperty("speciminOut")
+            ?: "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out",
+        "--eventbus-src",
+        project.findProperty("eventbusSrc")
+            ?: "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src"
+    ]
+}
+
 tasks.withType(Test).configureEach {
     // Creates half as many forks as there are CPU cores.
     maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
