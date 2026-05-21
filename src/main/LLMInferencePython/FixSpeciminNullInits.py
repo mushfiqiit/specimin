@@ -23,8 +23,12 @@ Fields that legitimately have `= null` in the original are left untouched.
 Insert this step AFTER RunSpeciminAll.py and BEFORE RemoveNullUnmarked.py.
 
 Usage:
-    python3 FixSpeciminNullInits.py            # patch in place
-    python3 FixSpeciminNullInits.py --dry-run  # show changes only
+    python3 FixSpeciminNullInits.py                          # patch in place
+    python3 FixSpeciminNullInits.py --dry-run                # show changes only
+    python3 FixSpeciminNullInits.py --verbose                # show all files processed
+    python3 FixSpeciminNullInits.py \\
+        --specimin-out /path/to/specimin-out \\
+        --eventbus-src /path/to/EventBus/src
 """
 from __future__ import annotations
 
@@ -32,34 +36,20 @@ import re
 import sys
 import pathlib
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# ── Default paths ──────────────────────────────────────────────────────────────
 
-SPECIMIN_OUT = pathlib.Path(
-    "/Users/mushfiqurrahmanchowdhury/Documents/specimin-out"
-)
-
-EVENTBUS_SRC = pathlib.Path(
+DEFAULT_SPECIMIN_OUT = "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out"
+DEFAULT_EVENTBUS_SRC = (
     "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src"
 )
 
-# ── Regex patterns ─────────────────────────────────────────────────────────────
+# ── Regex ──────────────────────────────────────────────────────────────────────
 
-# Matches a field declaration whose initializer is exactly `= null`.
-# Works for all visibility modifiers and generic/array types.
-# Groups:
-#   1 → everything up to and including the type (annotations, modifiers, type)
-#   2 → field name
-#   3 → the `= null;` portion (with surrounding whitespace)
+# Matches any line of the form:
+#   <indent><anything-without-paren><whitespace><fieldName> = null;
+# The `(` / `)` filter below excludes method-body assignments and method sigs.
 _FIELD_NULL_RE = re.compile(
-    r"^"
-    r"([ \t]*"                                       # leading indent
-    r"(?:(?:@[\w.]+(?:\([^)]*\))?\s+)*)"             # optional annotations
-    r"(?:(?:private|public|protected|static|final"
-    r"|volatile|transient|synchronized)\s+)*"        # optional modifiers
-    r"[\w$][\w$<>\[\].,? ]*\s+)"                     # type (including generics/arrays)
-    r"(\w+)"                                         # field name
-    r"([ \t]*=[ \t]*null[ \t]*;[ \t]*)"             # = null ;
-    r"$",
+    r"^([ \t]*\S[^\n(=]*\s)(\w+)([ \t]*=[ \t]*null[ \t]*;[^\n]*)$",
     re.MULTILINE,
 )
 
@@ -67,7 +57,7 @@ _FIELD_NULL_RE = re.compile(
 
 
 def has_null_init_in_original(field_name: str, original_src: str) -> bool:
-    """Return True if `field_name = null ;` appears in the original source."""
+    """Return True if `field_name = null;` appears in the original source."""
     return bool(
         re.search(
             r"\b" + re.escape(field_name) + r"[ \t]*=[ \t]*null[ \t]*;",
@@ -86,11 +76,16 @@ def fix_null_inits(
     fixed: list[str] = []
 
     def _replace(m: re.Match) -> str:  # type: ignore[type-arg]
+        prefix = m.group(1)
         field_name = m.group(2)
+        # Skip lines that look like method signatures or local variable assignments
+        # (they contain parentheses in the prefix/surrounding context)
+        if "(" in prefix or ")" in prefix:
+            return m.group(0)
         if not has_null_init_in_original(field_name, original_src):
             fixed.append(field_name)
             # Replace `Type fieldName = null;` → `Type fieldName;`
-            return m.group(1) + field_name + ";"
+            return prefix + field_name + ";"
         return m.group(0)  # legitimate null init — leave untouched
 
     patched = _FIELD_NULL_RE.sub(_replace, reduced_src)
@@ -98,39 +93,84 @@ def fix_null_inits(
 
 
 def find_original(
-    reduced_file: pathlib.Path, specimin_folder: pathlib.Path
+    reduced_file: pathlib.Path,
+    specimin_folder: pathlib.Path,
+    eventbus_src: pathlib.Path,
+    verbose: bool = False,
 ) -> pathlib.Path | None:
     """
     Resolve the original EventBus source file for a given reduced file.
 
     Reduced path:  <specimin_folder>/org/greenrobot/eventbus/Foo.java
-    Original path: EVENTBUS_SRC/org/greenrobot/eventbus/Foo.java
+    Original path: eventbus_src/org/greenrobot/eventbus/Foo.java
     """
     try:
         rel = reduced_file.relative_to(specimin_folder)
-        original = EVENTBUS_SRC / rel
-        return original if original.exists() else None
-    except ValueError:
+        original = eventbus_src / rel
+        if original.exists():
+            return original
+        if verbose:
+            print(f"      [skip-no-original] {rel}  (looked for: {original})")
         return None
+    except ValueError as e:
+        if verbose:
+            print(f"      [skip-relative-err] {reduced_file}  ({e})")
+        return None
+
+
+# ── Argument parsing ───────────────────────────────────────────────────────────
+
+
+def parse_args() -> tuple[pathlib.Path, pathlib.Path, bool, bool]:
+    """Return (specimin_out, eventbus_src, dry_run, verbose)."""
+    args = sys.argv[1:]
+    specimin_out = pathlib.Path(DEFAULT_SPECIMIN_OUT)
+    eventbus_src = pathlib.Path(DEFAULT_EVENTBUS_SRC)
+    dry_run = False
+    verbose = False
+
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--dry-run":
+            dry_run = True
+        elif a == "--verbose":
+            verbose = True
+        elif a == "--specimin-out" and i + 1 < len(args):
+            specimin_out = pathlib.Path(args[i + 1])
+            i += 1
+        elif a == "--eventbus-src" and i + 1 < len(args):
+            eventbus_src = pathlib.Path(args[i + 1])
+            i += 1
+        i += 1
+
+    return specimin_out, eventbus_src, dry_run, verbose
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    dry_run = "--dry-run" in sys.argv
+    specimin_out, eventbus_src, dry_run, verbose = parse_args()
 
-    if not SPECIMIN_OUT.exists():
-        print(f"ERROR: SPECIMIN_OUT not found: {SPECIMIN_OUT}")
+    print(f"SPECIMIN_OUT : {specimin_out}")
+    print(f"EVENTBUS_SRC : {eventbus_src}")
+
+    if not specimin_out.exists():
+        print(f"ERROR: SPECIMIN_OUT not found: {specimin_out}")
         sys.exit(1)
-    if not EVENTBUS_SRC.exists():
-        print(f"ERROR: EVENTBUS_SRC not found: {EVENTBUS_SRC}")
+    if not eventbus_src.exists():
+        print(f"ERROR: EVENTBUS_SRC not found: {eventbus_src}")
         sys.exit(1)
+
+    if dry_run:
+        print("(dry-run — no files will be modified)\n")
+    print()
 
     # Only process non-LLMInferenced folders (the raw Specimin output)
     folders = sorted(
         d
-        for d in SPECIMIN_OUT.iterdir()
+        for d in specimin_out.iterdir()
         if d.is_dir() and not d.name.endswith("LLMInferenced")
     )
 
@@ -138,18 +178,25 @@ def main() -> None:
         print("No specimin-out folders found.")
         sys.exit(0)
 
-    if dry_run:
-        print("(dry-run — no files will be modified)\n")
-
     total_files = 0
     total_fields = 0
 
     for folder in folders:
         print(f"── {folder.name}")
-        for reduced_file in sorted(folder.rglob("*.java")):
-            original_file = find_original(reduced_file, folder)
+        java_files = sorted(folder.rglob("*.java"))
+        if verbose:
+            print(f"   ({len(java_files)} .java files in this folder)")
+
+        for reduced_file in java_files:
+            original_file = find_original(
+                reduced_file, folder, eventbus_src, verbose=verbose
+            )
             if original_file is None:
-                continue  # stub with no original counterpart (e.g. NullUnmarked.java)
+                continue  # stub with no original counterpart
+
+            if verbose:
+                rel_display = reduced_file.relative_to(folder)
+                print(f"   [checking] {rel_display}")
 
             reduced_src = reduced_file.read_text(encoding="utf-8")
             original_src = original_file.read_text(encoding="utf-8")
