@@ -32,7 +32,7 @@ from collections import defaultdict
 # ── Default paths ──────────────────────────────────────────────────────────────
 
 DEFAULT_WARNINGS = (
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-after.txt"
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings-postLLM.txt"
 )
 DEFAULT_EVENTBUS_SRC = (
     "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src"
