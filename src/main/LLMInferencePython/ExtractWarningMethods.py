@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
 """
-RunSpeciminAll.py
+ExtractWarningMethods.py
 
-Reads nullaway-warnings.txt, derives a Specimin target for each NullAway
-warning, and runs Specimin to produce a reduced program per unique target
-under SPECIMIN_OUT.
+Reads nullaway-warnings.txt, finds the enclosing method or constructor for
+each warning, and writes a deduplicated list to warningMethods.txt (one
+fully-qualified Specimin-style target per line).
 
-A warning line looks like:
-    /abs/path/To/File.java:LINE: error: [NullAway] <message>
+  org.greenrobot.eventbus.EventBus#subscribe(Object, SubscriberMethod)
+  org.greenrobot.eventbus.PendingPost#PendingPost(Object, Subscription)
+  ...
 
-For each warning the script finds the *enclosing member* of the warning line
-by scanning the brace structure of the Java file:
-  * inside a method/constructor body  -> --targetMethod "pkg.Class#name(Type1, Type2)"
-  * on a field declaration            -> --targetField  "pkg.Class#fieldName"
-  * inside a static/instance initializer block
-                                      -> --targetField for the field being assigned
+Field-level warnings (where the warning is on a bare field declaration rather
+than inside a method body) are skipped because they have no callable signature.
 
 Usage:
-    python3 RunSpeciminAll.py            # run all
-    python3 RunSpeciminAll.py --dry-run  # only derive + print targets, don't run Specimin
+    python3 ExtractWarningMethods.py
 
-Paths below can be overridden with environment variables of the same name
-(useful for testing); by default they point at the usual locations.
+Paths can be overridden via environment variables:
+    NULLAWAY_WARNINGS_FILE   path to nullaway-warnings.txt
+    EVENTBUS_SRC_ROOT        root of the Java source tree
+    WARNING_METHODS_FILE     output file (default: same dir as warnings file)
 """
 from __future__ import annotations
 
@@ -29,7 +27,6 @@ import os
 import re
 import sys
 import pathlib
-import subprocess
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 def _path(env_name: str, default: str) -> pathlib.Path:
@@ -38,6 +35,10 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
     "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
+)
+EVENTBUS_SRC_ROOT = _path(
+    "EVENTBUS_SRC_ROOT",
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
@@ -48,25 +49,10 @@ WARNING_METHODS_FILE = _path(
         )
     ).parent / "warningMethods.txt"),
 )
-EVENTBUS_SRC_ROOT = _path(
-    "EVENTBUS_SRC_ROOT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src",
-)
-SPECIMIN_DIR = _path(
-    "SPECIMIN_DIR",
-    "/Users/mushfiqurrahmanchowdhury/Documents/specimin",
-)
-SPECIMIN_OUT = _path(
-    "SPECIMIN_OUT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out",
-)
-JAR_PATH = _path("JAR_PATH", str(pathlib.Path.home() / "eventbus-deps"))
-GRADLEW  = SPECIMIN_DIR / "gradlew"
 
-# ── Java source helpers ────────────────────────────────────────────────────────
+# ── Java source helpers (shared with RunSpeciminAll.py) ────────────────────────
 
 def strip_strings_and_line_comment(line: str) -> str:
-    """Remove // comments and the contents of string/char literals from a line."""
     result, i, n = [], 0, len(line)
     while i < n:
         c = line[i]
@@ -89,7 +75,6 @@ def strip_strings_and_line_comment(line: str) -> str:
 
 
 def clean_lines(lines: list) -> list:
-    """Return lines with block comments, // comments and literals removed."""
     cleaned = []
     in_block = False
     for raw in lines:
@@ -126,13 +111,8 @@ def get_package(lines: list) -> str:
 
 
 def get_class_stack_at(cleaned: list, target_idx: int) -> list:
-    """
-    Walk cleaned lines up to target_idx tracking brace depth and
-    class/interface/enum declarations. Returns the enclosing type names.
-    """
     class_stack, open_depths = [], []
     brace_depth, pending_class = 0, None
-
     for i, line in enumerate(cleaned):
         if i > target_idx:
             break
@@ -155,12 +135,10 @@ def get_class_stack_at(cleaned: list, target_idx: int) -> list:
 
 
 def strip_annotations(text: str) -> str:
-    """Remove @Annotation and @Annotation(...) tokens (literals already stripped)."""
     return re.sub(r'@\w+(\s*\([^)]*\))?', ' ', text)
 
 
 def split_params(params_str: str) -> list:
-    """Split a parameter string by top-level commas (respects <...> depth)."""
     params, buf, depth = [], [], 0
     for ch in params_str:
         if ch == '<':
@@ -184,11 +162,6 @@ _KEYWORDS = frozenset({
 
 
 def parse_method_sig(decl_text: str):
-    """
-    Extract (method_name, [param_types]) from a method/constructor declaration.
-    decl_text must already have comments/literals stripped; annotations are
-    removed here. Returns (None, []) if it doesn't look like a declaration.
-    """
     text = strip_annotations(decl_text)
     m = re.search(r'(\w+)\s*\(([^)]*)\)', text)
     if not m:
@@ -196,11 +169,9 @@ def parse_method_sig(decl_text: str):
     method_name = m.group(1)
     if method_name in _KEYWORDS:
         return None, []
-
     raw_params = m.group(2).strip()
     if not raw_params:
         return method_name, []
-
     param_types = []
     for param in split_params(raw_params):
         param = re.sub(r'\bfinal\s+', '', param).strip()
@@ -216,7 +187,6 @@ _TOPLEVEL_EQ = re.compile(r'(?<![=!<>+\-*/%&|^])=(?!=)')
 
 
 def parse_field_name(decl_text: str):
-    """Extract the field name from a (cleaned) field declaration."""
     text = strip_annotations(decl_text)
     eq = _TOPLEVEL_EQ.search(text)
     if eq:
@@ -228,21 +198,11 @@ def parse_field_name(decl_text: str):
 
 
 def index_members(cleaned: list):
-    """
-    Single forward pass over the cleaned lines of a Java file.
-    Returns (method_spans, field_spans, init_spans):
-      method_spans: list of (start, end, decl_text)
-      field_spans:  list of (start, end, field_name)
-      init_spans:   list of (start, end)   # static/instance initializer blocks
-    Members declared inside anonymous classes are attributed to the enclosing
-    field/method span, which is what Specimin needs anyway.
-    """
     method_spans, field_spans, init_spans = [], [], []
-
     depth = 0
-    class_body_depths = []   # depths of currently-open class bodies
-    brace_kinds = []         # what each currently-open '{' belongs to
-    member = None            # (kind, start_idx, payload) for the open member
+    class_body_depths = []
+    brace_kinds = []
+    member = None
     pending, pending_start = '', None
 
     def at_member_level() -> bool:
@@ -311,7 +271,6 @@ def index_members(cleaned: list):
                 elif paren == -1:
                     name = parse_field_name(pending)
                 else:
-                    # abstract/interface method declaration without a body
                     mname, _ = parse_method_sig(pending)
                     if mname:
                         method_spans.append((pending_start, i, pending))
@@ -324,7 +283,6 @@ def index_members(cleaned: list):
 
 
 def innermost(spans, target_idx):
-    """Return the payload-bearing span containing target_idx with the largest start."""
     best = None
     for span in spans:
         if span[0] <= target_idx <= span[1]:
@@ -335,140 +293,101 @@ def innermost(spans, target_idx):
 
 # ── Location parsing ───────────────────────────────────────────────────────────
 
-def fqcn_to_rel_file(fqcn: str) -> pathlib.Path:
-    """
-    Convert a fully-qualified class name to its relative .java file path.
-
-    The first dot-separated token that starts with an uppercase letter is the
-    outer class (Java convention); everything before it is the package path.
-    Nested classes (e.g. SubscriberMethodFinder.FindState) share the outer
-    class file.
-
-    Example:
-        org.greenrobot.eventbus.EventBus            -> org/greenrobot/eventbus/EventBus.java
-        org.greenrobot.eventbus.SubscriberMethodFinder.FindState
-                                                    -> org/greenrobot/eventbus/SubscriberMethodFinder.java
-    """
-    parts = fqcn.split('.')
-    for i, part in enumerate(parts):
-        if part and part[0].isupper():
-            pkg_path = '/'.join(parts[:i])
-            outer_class = parts[i]
-            return pathlib.Path(pkg_path) / f"{outer_class}.java"
-    # fallback — shouldn't happen for well-formed Java names
-    return pathlib.Path(fqcn.replace('.', '/') + '.java')
-
-
-def parse_warning_methods(txt_file: pathlib.Path) -> list:
-    """
-    Read warningMethods.txt.  Each non-empty line is already a fully-qualified
-    Specimin target:
-        org.greenrobot.eventbus.EventBus#subscribe(Object, SubscriberMethod)
-
-    Returns a list of (rel_file, target, short_name), deduplicated.
-    """
+def parse_locations(txt_file: pathlib.Path) -> list:
     entries, seen = [], set()
     for raw in txt_file.read_text(encoding='utf-8').splitlines():
-        target = raw.strip()
-        if not target or target.startswith('#'):
+        raw = raw.strip()
+        if not raw or '[NullAway]' not in raw:
             continue
-        if target in seen:
+        parts = raw.split(':')
+        if len(parts) < 2:
             continue
-        seen.add(target)
-
-        hash_idx = target.find('#')
-        if hash_idx == -1:
-            print(f"  [SKIP] malformed line (no '#'): {target!r}")
+        fp = pathlib.Path(parts[0])
+        try:
+            ln = int(parts[1])
+        except ValueError:
             continue
-
-        fqcn = target[:hash_idx]
-        member = target[hash_idx + 1:]
-        paren = member.find('(')
-        short_name = member[:paren] if paren != -1 else member
-
-        rel_file = fqcn_to_rel_file(fqcn)
-        entries.append((rel_file, target, short_name))
+        if (fp, ln) not in seen:
+            seen.add((fp, ln))
+            entries.append((fp, ln))
     return entries
 
 
-# ── Specimin runner ────────────────────────────────────────────────────────────
+# ── Method extraction ──────────────────────────────────────────────────────────
 
-def run_specimin(kind, rel_file, target, short_name, index, dry_run=False) -> int:
-    output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
-    target_flag = "--targetMethod" if kind == 'method' else "--targetField"
+def extract_method_target(file_path: pathlib.Path, line_num: int):
+    """
+    Returns a Specimin-style 'pkg.Class#name(Type1, Type2)' string if the
+    warning is inside a method/constructor body, or None if it is on a bare
+    field or unrecognised location.
+    """
+    lines      = file_path.read_text(encoding='utf-8').splitlines()
+    cleaned    = clean_lines(lines)
+    target_idx = line_num - 1
 
-    args_str = (
-        f'--root "{EVENTBUS_SRC_ROOT}" '
-        f'--targetFile "{rel_file}" '
-        f'{target_flag} "{target}" '
-        f'--outputDirectory "{output_dir}" '
-        f'--jarPath "{JAR_PATH}" '
-        f'--modularityModel nullaway'
-    )
-    cmd = [str(GRADLEW), "run", f"--args={args_str}"]
+    package     = get_package(lines)
+    class_stack = get_class_stack_at(cleaned, target_idx)
+    if not class_stack:
+        return None
+    fqcn = (package + '.' if package else '') + '.'.join(class_stack)
 
-    print(f"\n{'─' * 60}")
-    print(f"[{index:02d}] ({kind}) {target}")
-    print(f"      out → {output_dir.name}")
-    print(f"      cmd : {' '.join(cmd)}")
+    method_spans, _field_spans, _init_spans = index_members(cleaned)
 
-    if dry_run:
-        print("      [dry-run — skipped]")
-        return 0
+    span = innermost(method_spans, target_idx)
+    if span is None:
+        return None
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(cmd, cwd=str(SPECIMIN_DIR))
-    status = "[OK]" if result.returncode == 0 else f"[FAILED — exit {result.returncode}]"
-    print(f"      {status}")
-    return result.returncode
+    name, params = parse_method_sig(span[2])
+    if not name:
+        return None
+
+    return f"{fqcn}#{name}({', '.join(params)})"
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    dry_run = "--dry-run" in sys.argv
-
-    required = [
-        (WARNING_METHODS_FILE, "warningMethods.txt"),
-        (EVENTBUS_SRC_ROOT,    "EventBus src root"),
-    ]
-    if not dry_run:
-        required += [
-            (SPECIMIN_DIR, "Specimin directory"),
-            (GRADLEW,      "gradlew"),
-            (JAR_PATH,     "jar dependency directory"),
-        ]
-    for path, label in required:
+    for path, label in [
+        (NULLAWAY_WARNINGS_FILE, "nullaway-warnings.txt"),
+        (EVENTBUS_SRC_ROOT,      "EventBus src root"),
+    ]:
         if not path.exists():
             print(f"ERROR: {label} not found:\n  {path}")
             sys.exit(1)
 
-    if not dry_run:
-        SPECIMIN_OUT.mkdir(parents=True, exist_ok=True)
+    entries = parse_locations(NULLAWAY_WARNINGS_FILE)
+    print(f"Found {len(entries)} NullAway warning location(s).")
 
-    entries = parse_warning_methods(WARNING_METHODS_FILE)
-    print(f"Found {len(entries)} unique method target(s) in {WARNING_METHODS_FILE.name}")
-    if dry_run:
-        print("(dry-run mode — Specimin will not be executed)")
+    seen, methods = set(), []
+    skipped = 0
 
-    successes, failures = 0, []
+    for fp, ln in entries:
+        try:
+            target = extract_method_target(fp, ln)
+        except (OSError, ValueError) as e:
+            print(f"  [SKIP] {fp.name}:{ln} — {e}")
+            skipped += 1
+            continue
 
-    for i, (rel_file, target, short_name) in enumerate(entries, start=1):
-        print(f"\n[{i:02d}] {target}")
-        rc = run_specimin('method', rel_file, target, short_name, i, dry_run=dry_run)
-        if rc == 0:
-            successes += 1
+        if target is None:
+            print(f"  [SKIP] {fp.name}:{ln} — not inside a method/constructor")
+            skipped += 1
+            continue
+
+        if target not in seen:
+            seen.add(target)
+            methods.append(target)
+            print(f"  + {target}")
         else:
-            failures.append((i, target))
+            print(f"  (dup) {fp.name}:{ln} — already listed")
 
-    print(f"\n{'═' * 60}")
-    print(f"Summary: {successes}/{len(entries)} targets succeeded.")
-    if failures:
-        print("Failed:")
-        for idx, info in failures:
-            print(f"  [{idx:02d}] {info}")
+    WARNING_METHODS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WARNING_METHODS_FILE.write_text('\n'.join(methods) + ('\n' if methods else ''),
+                                    encoding='utf-8')
 
-    sys.exit(0 if not failures else 1)
+    print(f"\nWrote {len(methods)} unique method target(s) to {WARNING_METHODS_FILE}")
+    if skipped:
+        print(f"Skipped {skipped} warning(s) (field declarations or parse errors).")
 
 
 if __name__ == "__main__":
