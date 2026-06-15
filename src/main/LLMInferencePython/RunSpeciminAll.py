@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import shlex
 import pathlib
 import subprocess
 
@@ -397,15 +398,16 @@ def run_specimin(kind, rel_file, target, short_name, index, dry_run=False) -> in
     output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
     target_flag = "--targetMethod" if kind == 'method' else "--targetField"
 
-    args_str = (
-        f'--root "{EVENTBUS_SRC_ROOT}" '
-        f'--targetFile "{rel_file}" '
-        f'{target_flag} "{target}" '
-        f'--outputDirectory "{output_dir}" '
-        f'--jarPath "{JAR_PATH}" '
-        f'--modularityModel nullaway'
-    )
-    cmd = [str(GRADLEW), "run", f"--args={args_str}"]
+    specimin_args = [
+        '--root',            str(EVENTBUS_SRC_ROOT),
+        '--targetFile',      str(rel_file),
+        target_flag,         target,
+        '--outputDirectory', str(output_dir),
+        '--jarPath',         str(JAR_PATH),
+        '--modularityModel', 'nullaway',
+    ]
+    args_str = ' '.join(shlex.quote(a) for a in specimin_args)
+    cmd = [str(GRADLEW), "--no-daemon", "run", f"--args={args_str}"]
 
     print(f"\n{'─' * 60}")
     print(f"[{index:02d}] ({kind}) {target}")

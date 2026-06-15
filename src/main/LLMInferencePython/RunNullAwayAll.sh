@@ -91,6 +91,13 @@ run_nullaway() {
     local warnings="$dir/nullaway-warnings.txt"
 
     echo "  Running NullAway..."
+    # Upgrade Gradle wrapper to 8.7 so it runs under Java 17
+    WRAPPER_PROPS="$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
+    if [ -f "$WRAPPER_PROPS" ]; then
+        sed -i '' \
+        's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip|' \
+        "$WRAPPER_PROPS"
+    fi
     # Capture full output; do NOT let a non-zero exit abort the script here
     ./gradlew clean compileJava 2>&1 | tee "$report" || true
 
