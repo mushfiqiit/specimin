@@ -83,6 +83,18 @@ copy_gradle_wrapper() {
         cp -r "$GRADLE_WRAPPER_SRC/gradle"   "$dir/gradle"
         chmod +x "$dir/gradlew"
     fi
+
+    # Always force Gradle 8.7 — the EventBus wrapper uses 6.8.3 which
+    # doesn't support Java 17.
+    mkdir -p "$dir/gradle/wrapper"
+    cat > "$dir/gradle/wrapper/gradle-wrapper.properties" <<'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF   
+
 }
 
 run_nullaway() {
@@ -92,12 +104,7 @@ run_nullaway() {
 
     echo "  Running NullAway..."
     # Upgrade Gradle wrapper to 8.7 so it runs under Java 17
-    WRAPPER_PROPS="$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties"
-    if [ -f "$WRAPPER_PROPS" ]; then
-        sed -i '' \
-        's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip|' \
-        "$WRAPPER_PROPS"
-    fi
+    
     # Capture full output; do NOT let a non-zero exit abort the script here
     ./gradlew clean compileJava 2>&1 | tee "$report" || true
 
