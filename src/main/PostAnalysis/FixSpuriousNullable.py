@@ -43,7 +43,7 @@ DEFAULT_EVENTBUS_SRC = (
 # Matches lines like:
 #   /path/Foo.java:42: warning: [NullAway] dereferenced expression bar.baz is @Nullable
 _WARNING_RE = re.compile(
-    r"^(.+?):(\d+):\s*warning:\s*\[NullAway\]\s*"
+    r"^(.+?):(\d+):\s*(?:warning|error):\s*\[NullAway\]\s*"
     r"dereferenced expression\s+(.+?)\s+is\s+@Nullable"
 )
 
