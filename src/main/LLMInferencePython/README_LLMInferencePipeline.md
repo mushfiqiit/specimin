@@ -11,6 +11,8 @@ bash    RunNullAwayAll.sh
 python3 RunLLMInferenceAll.py
 python3 AddNonnullImport.py
 bash    RunNullAwayAll.sh
+cd specimin
+./gradlew applyAnnotations
 ```
 
 ## Usage preservation (PreserveUsages.py)
