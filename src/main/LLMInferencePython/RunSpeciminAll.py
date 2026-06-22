@@ -16,6 +16,17 @@ by scanning the brace structure of the Java file:
   * inside a static/instance initializer block
                                       -> --targetField for the field being assigned
 
+Usage preservation
+------------------
+By default each Specimin run is augmented with the members that *dereference*
+the fields the target touches (see PreserveUsages.py), so those usage sites
+(e.g. "x.y = 0;") survive in the slice and the downstream LLM does not wrongly
+infer the field as @Nullable. All extra targets are added to the same Specimin
+invocation, producing one combined output slice per run. Control via:
+    PRESERVE_USAGES=0          disable the layer (default: enabled)
+    PRESERVE_USAGES_SCOPE      'class' (default) or 'repo'
+    PRESERVE_USAGES_FIELDS     'member' (default) or 'class'
+
 Usage:
     python3 RunSpeciminAll.py            # run all
     python3 RunSpeciminAll.py --dry-run  # only derive + print targets, don't run Specimin
@@ -31,6 +42,8 @@ import sys
 import shlex
 import pathlib
 import subprocess
+
+from PreserveUsages import find_usage_targets
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 def _path(env_name: str, default: str) -> pathlib.Path:
@@ -63,6 +76,21 @@ SPECIMIN_OUT = _path(
 )
 JAR_PATH = _path("JAR_PATH", str(pathlib.Path.home() / "eventbus-deps"))
 GRADLEW  = SPECIMIN_DIR / "gradlew"
+
+# ── Usage-preservation layer ─────────────────────────────────────────────────────
+# When enabled, for each target Specimin run we also pull in the members that
+# *dereference* a field of the target class (e.g. "x.y = 0;"), so those usage
+# sites survive in the slice and the downstream LLM does not wrongly infer the
+# field as @Nullable. See PreserveUsages.py for details.
+#   PRESERVE_USAGES=0          disables the layer (default: enabled)
+#   PRESERVE_USAGES_SCOPE      'class' (default, high precision) or 'repo'
+#   PRESERVE_USAGES_FIELDS     'member' (default; only fields the target touches)
+#                              or 'class' (every field of the target class)
+PRESERVE_USAGES = os.environ.get("PRESERVE_USAGES", "1").strip().lower() not in (
+    "0", "false", "no", "off", "",
+)
+PRESERVE_USAGES_SCOPE = os.environ.get("PRESERVE_USAGES_SCOPE", "class").strip().lower()
+PRESERVE_USAGES_FIELDS = os.environ.get("PRESERVE_USAGES_FIELDS", "member").strip().lower()
 
 # ── Java source helpers ────────────────────────────────────────────────────────
 
@@ -394,14 +422,70 @@ def parse_warning_methods(txt_file: pathlib.Path) -> list:
 
 # ── Specimin runner ────────────────────────────────────────────────────────────
 
+def collect_extra_targets(kind, rel_file, target):
+    """Return (target_files, target_methods, target_fields) for one Specimin run.
+
+    Starts from the primary target and, when the usage-preservation layer is
+    enabled, adds the members that dereference a field of the target class so
+    that those usage sites survive in the slice. All of these are placed in the
+    same Specimin invocation, producing one combined output slice.
+    """
+    target_files = [str(rel_file)]
+    target_methods = [target] if kind == 'method' else []
+    target_fields = [target] if kind == 'field' else []
+
+    if not PRESERVE_USAGES:
+        return target_files, target_methods, target_fields
+
+    fqcn = target.split('#', 1)[0]
+    try:
+        extras = find_usage_targets(
+            EVENTBUS_SRC_ROOT, fqcn, rel_file, target,
+            scope=PRESERVE_USAGES_SCOPE, fields=PRESERVE_USAGES_FIELDS,
+        )
+    except Exception as e:  # never let the extra layer break the primary run
+        print(f"      [usage-preserve WARN] {type(e).__name__}: {e}")
+        return target_files, target_methods, target_fields
+
+    for ekind, erel, etarget in extras:
+        erel_str = str(erel)
+        if erel_str not in target_files:
+            target_files.append(erel_str)
+        if ekind == 'method':
+            if etarget not in target_methods:
+                target_methods.append(etarget)
+        else:
+            if etarget not in target_fields:
+                target_fields.append(etarget)
+
+    added = len(target_methods) + len(target_fields) - 1
+    if added > 0:
+        print(f"      + {added} usage target(s) preserved (scope={PRESERVE_USAGES_SCOPE}):")
+        for m in target_methods:
+            if m != target:
+                print(f"          (method) {m}")
+        for f in target_fields:
+            if f != target:
+                print(f"          (field)  {f}")
+
+    return target_files, target_methods, target_fields
+
+
 def run_specimin(kind, rel_file, target, short_name, index, dry_run=False) -> int:
     output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
-    target_flag = "--targetMethod" if kind == 'method' else "--targetField"
 
-    specimin_args = [
-        '--root',            str(EVENTBUS_SRC_ROOT),
-        '--targetFile',      str(rel_file),
-        target_flag,         target,
+    target_files, target_methods, target_fields = collect_extra_targets(
+        kind, rel_file, target
+    )
+
+    specimin_args = ['--root', str(EVENTBUS_SRC_ROOT)]
+    for tf in target_files:
+        specimin_args += ['--targetFile', tf]
+    for tm in target_methods:
+        specimin_args += ['--targetMethod', tm]
+    for tfield in target_fields:
+        specimin_args += ['--targetField', tfield]
+    specimin_args += [
         '--outputDirectory', str(output_dir),
         '--jarPath',         str(JAR_PATH),
         '--modularityModel', 'nullaway',
