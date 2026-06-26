@@ -52,6 +52,14 @@ def collect_java_files(folder: pathlib.Path) -> dict[str, str]:
     return files
 
 
+def read_usage_context(folder: pathlib.Path) -> str:
+    """Read usage-context.txt (written by RunSpeciminAll.py), or '' if absent/empty."""
+    ctx_file = folder / "usage-context.txt"
+    if not ctx_file.exists():
+        return ""
+    return ctx_file.read_text(encoding="utf-8").strip()
+
+
 def read_nullaway_warnings(folder: pathlib.Path) -> str:
     warnings_file = folder / "nullaway-warnings.txt"
     if not warnings_file.exists():
@@ -64,10 +72,24 @@ def read_nullaway_warnings(folder: pathlib.Path) -> str:
 
 # ── Prompt builder ─────────────────────────────────────────────────────────────
 
-def build_prompt(java_files: dict[str, str], nullaway_warnings: str) -> str:
+def build_prompt(java_files: dict[str, str], nullaway_warnings: str,
+                 usage_context: str = "") -> str:
     sources = "\n\n".join(
         f"// === {name} ===\n{src}" for name, src in java_files.items()
     )
+    usage_section = ""
+    if usage_context:
+        usage_section = f"""--- FIELD USAGE CONTEXT (read-only evidence; do NOT annotate these excerpts) ---
+
+These excerpts come from the ORIGINAL program (outside the reduced slice). They show
+how the relevant fields are dereferenced, guarded, and assigned elsewhere, which the
+reduced slice omits. Use them as evidence when deciding annotations.
+
+{usage_context}
+
+--- END OF FIELD USAGE CONTEXT ---
+
+"""
     return f"""You are a Java null-safety expert working with NullAway and JSpecify annotations.
 
 The Java code below is a Specimin-reduced minimal reproduction of a method originally
@@ -80,7 +102,7 @@ The @NullUnmarked annotation has been removed so that NullAway now checks it.
 
 --- END OF NULLAWAY WARNINGS ---
 
---- REDUCED SOURCE CODE ---
+{usage_section}--- REDUCED SOURCE CODE ---
 
 {sources}
 
@@ -227,7 +249,11 @@ def main() -> None:
         warnings = read_nullaway_warnings(folder)
         print(f"    Warnings   : {len(warnings.splitlines())} line(s)")
 
-        prompt = build_prompt(java_files, warnings)
+        usage_context = read_usage_context(folder)
+        if usage_context:
+            print(f"    Usage ctx  : {len(usage_context.splitlines())} line(s)")
+
+        prompt = build_prompt(java_files, warnings, usage_context)
         print(f"    Prompt     : {len(prompt):,} chars → Groq llama-3.3-70b-versatile")
 
         if dry_run:

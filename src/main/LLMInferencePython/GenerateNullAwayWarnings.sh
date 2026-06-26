@@ -44,8 +44,8 @@ NULLAWAY_VERSION="${NULLAWAY_VERSION:-0.10.10}"
 GRADLE_DIST_VERSION="${GRADLE_DIST_VERSION:-8.7}"
 BUILD_DIR="${BUILD_DIR:-$EVENTBUS_DIR/.nullaway-build}"
 
-REPORT_FILE="$OUT_DIR/nullaway-report_after_LLMInference.txt"
-WARN_FILE="$OUT_DIR/nullaway-warnings_after_LLMInference.txt"
+REPORT_FILE="$OUT_DIR/nullaway-report_after_postprocessing.txt"
+WARN_FILE="$OUT_DIR/nullaway-warnings_after_postprocessing.txt"
 
 DIVIDER="$(printf '─%.0s' {1..60})"
 

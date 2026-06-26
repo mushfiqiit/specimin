@@ -16,16 +16,14 @@ by scanning the brace structure of the Java file:
   * inside a static/instance initializer block
                                       -> --targetField for the field being assigned
 
-Usage preservation
-------------------
-By default each Specimin run is augmented with the members that *dereference*
-the fields the target touches (see PreserveUsages.py), so those usage sites
-(e.g. "x.y = 0;") survive in the slice and the downstream LLM does not wrongly
-infer the field as @Nullable. All extra targets are added to the same Specimin
-invocation, producing one combined output slice per run. Control via:
-    PRESERVE_USAGES=0          disable the layer (default: enabled)
-    PRESERVE_USAGES_SCOPE      'class' (default) or 'repo'
-    PRESERVE_USAGES_FIELDS     'member' (default) or 'class'
+Specimin runs plain (one minimal slice per target). After each slice is
+generated, the lines elsewhere in the original source that use the target's
+fields are extracted to usage-context.txt inside the slice folder (see
+ExtractUsageContext.py); RunLLMInferenceAll.py splices that into the LLM prompt.
+Control via:
+    USAGE_CONTEXT=0            disable usage-context extraction (default: enabled)
+    USAGE_CONTEXT_SCOPE        'class' (default) or 'repo'
+    USAGE_CONTEXT_LINES        lines of surrounding context per usage (default 1)
 
 Usage:
     python3 RunSpeciminAll.py            # run all
@@ -43,7 +41,7 @@ import shlex
 import pathlib
 import subprocess
 
-from PreserveUsages import find_usage_targets
+from ExtractUsageContext import build_usage_context_text
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 def _path(env_name: str, default: str) -> pathlib.Path:
@@ -77,20 +75,21 @@ SPECIMIN_OUT = _path(
 JAR_PATH = _path("JAR_PATH", str(pathlib.Path.home() / "eventbus-deps"))
 GRADLEW  = SPECIMIN_DIR / "gradlew"
 
-# ── Usage-preservation layer ─────────────────────────────────────────────────────
-# When enabled, for each target Specimin run we also pull in the members that
-# *dereference* a field of the target class (e.g. "x.y = 0;"), so those usage
-# sites survive in the slice and the downstream LLM does not wrongly infer the
-# field as @Nullable. See PreserveUsages.py for details.
-#   PRESERVE_USAGES=0          disables the layer (default: enabled)
-#   PRESERVE_USAGES_SCOPE      'class' (default, high precision) or 'repo'
-#   PRESERVE_USAGES_FIELDS     'member' (default; only fields the target touches)
-#                              or 'class' (every field of the target class)
-PRESERVE_USAGES = os.environ.get("PRESERVE_USAGES", "1").strip().lower() not in (
+# ── Usage-context extraction ─────────────────────────────────────────────────────
+# Specimin runs *plain* (one minimal slice per target). After each slice is
+# generated we extract the lines elsewhere in the ORIGINAL source that use the
+# target's fields (dereferences, null-guards, assignments) and write them to
+# usage-context.txt inside the slice folder. RunLLMInferenceAll.py then splices
+# that into the prompt as read-only evidence. This gives the LLM the constraining
+# context without bloating the (compilable) slice. See ExtractUsageContext.py.
+#   USAGE_CONTEXT=0            disables extraction (default: enabled)
+#   USAGE_CONTEXT_SCOPE       'class' (default, high precision) or 'repo'
+#   USAGE_CONTEXT_LINES       lines of surrounding context per usage (default 1)
+USAGE_CONTEXT = os.environ.get("USAGE_CONTEXT", "1").strip().lower() not in (
     "0", "false", "no", "off", "",
 )
-PRESERVE_USAGES_SCOPE = os.environ.get("PRESERVE_USAGES_SCOPE", "class").strip().lower()
-PRESERVE_USAGES_FIELDS = os.environ.get("PRESERVE_USAGES_FIELDS", "member").strip().lower()
+USAGE_CONTEXT_SCOPE = os.environ.get("USAGE_CONTEXT_SCOPE", "class").strip().lower()
+USAGE_CONTEXT_LINES = int(os.environ.get("USAGE_CONTEXT_LINES", "1"))
 
 # ── Java source helpers ────────────────────────────────────────────────────────
 
@@ -422,70 +421,38 @@ def parse_warning_methods(txt_file: pathlib.Path) -> list:
 
 # ── Specimin runner ────────────────────────────────────────────────────────────
 
-def collect_extra_targets(kind, rel_file, target):
-    """Return (target_files, target_methods, target_fields) for one Specimin run.
+def write_usage_context(output_dir, target):
+    """Extract usages of the target's fields and write usage-context.txt.
 
-    Starts from the primary target and, when the usage-preservation layer is
-    enabled, adds the members that dereference a field of the target class so
-    that those usage sites survive in the slice. All of these are placed in the
-    same Specimin invocation, producing one combined output slice.
+    Best-effort: any failure is reported but never fails the Specimin run.
     """
-    target_files = [str(rel_file)]
-    target_methods = [target] if kind == 'method' else []
-    target_fields = [target] if kind == 'field' else []
-
-    if not PRESERVE_USAGES:
-        return target_files, target_methods, target_fields
-
-    fqcn = target.split('#', 1)[0]
+    if not USAGE_CONTEXT:
+        return
     try:
-        extras = find_usage_targets(
-            EVENTBUS_SRC_ROOT, fqcn, rel_file, target,
-            scope=PRESERVE_USAGES_SCOPE, fields=PRESERVE_USAGES_FIELDS,
+        text = build_usage_context_text(
+            EVENTBUS_SRC_ROOT, target=target, slice_dir=output_dir,
+            scope=USAGE_CONTEXT_SCOPE, context_lines=USAGE_CONTEXT_LINES,
         )
-    except Exception as e:  # never let the extra layer break the primary run
-        print(f"      [usage-preserve WARN] {type(e).__name__}: {e}")
-        return target_files, target_methods, target_fields
-
-    for ekind, erel, etarget in extras:
-        erel_str = str(erel)
-        if erel_str not in target_files:
-            target_files.append(erel_str)
-        if ekind == 'method':
-            if etarget not in target_methods:
-                target_methods.append(etarget)
-        else:
-            if etarget not in target_fields:
-                target_fields.append(etarget)
-
-    added = len(target_methods) + len(target_fields) - 1
-    if added > 0:
-        print(f"      + {added} usage target(s) preserved (scope={PRESERVE_USAGES_SCOPE}):")
-        for m in target_methods:
-            if m != target:
-                print(f"          (method) {m}")
-        for f in target_fields:
-            if f != target:
-                print(f"          (field)  {f}")
-
-    return target_files, target_methods, target_fields
+    except Exception as e:
+        print(f"      [usage-context WARN] {type(e).__name__}: {e}")
+        return
+    ctx_file = output_dir / "usage-context.txt"
+    ctx_file.write_text(text + ("\n" if text else ""), encoding="utf-8")
+    if text:
+        n = sum(1 for ln in text.splitlines() if ln.strip().split(':', 1)[0].strip().isdigit())
+        print(f"      usage-context.txt → {n} usage line(s) (scope={USAGE_CONTEXT_SCOPE})")
+    else:
+        print("      usage-context.txt → (no field usages found)")
 
 
 def run_specimin(kind, rel_file, target, short_name, index, dry_run=False) -> int:
     output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
+    target_flag = "--targetMethod" if kind == 'method' else "--targetField"
 
-    target_files, target_methods, target_fields = collect_extra_targets(
-        kind, rel_file, target
-    )
-
-    specimin_args = ['--root', str(EVENTBUS_SRC_ROOT)]
-    for tf in target_files:
-        specimin_args += ['--targetFile', tf]
-    for tm in target_methods:
-        specimin_args += ['--targetMethod', tm]
-    for tfield in target_fields:
-        specimin_args += ['--targetField', tfield]
-    specimin_args += [
+    specimin_args = [
+        '--root',            str(EVENTBUS_SRC_ROOT),
+        '--targetFile',      str(rel_file),
+        target_flag,         target,
         '--outputDirectory', str(output_dir),
         '--jarPath',         str(JAR_PATH),
         '--modularityModel', 'nullaway',
@@ -506,6 +473,10 @@ def run_specimin(kind, rel_file, target, short_name, index, dry_run=False) -> in
     result = subprocess.run(cmd, cwd=str(SPECIMIN_DIR))
     status = "[OK]" if result.returncode == 0 else f"[FAILED — exit {result.returncode}]"
     print(f"      {status}")
+
+    if result.returncode == 0:
+        write_usage_context(output_dir, target)
+
     return result.returncode
 
 
