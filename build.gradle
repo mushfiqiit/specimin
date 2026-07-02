@@ -191,6 +191,28 @@ tasks.register("applyAnnotations", JavaExec) {
     ]
 }
 
+// AST- and checker-evidence-based replacement for the old regex-based FixSpuriousNullable.py.
+// Override paths with -PwarningsFile=<path> -PsrcRoot=<path>; add -PdryRun=true / -Pverbose=true.
+tasks.register("fixSpuriousAnnotations", JavaExec) {
+    dependsOn("compileJava")
+    group = "nullaway"
+    description = "Flips spurious @Nullable -> @Nonnull using AST-resolved, checker-verified usage-context evidence."
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "org.checkerframework.specimin.usagecontext.UsageContextInference"
+    args = [
+        "--warnings",
+        project.findProperty("warningsFile") ?: "/path/to/nullaway-warnings.txt",
+        "--src",
+        project.findProperty("srcRoot") ?: "/path/to/EventBus/src"
+    ]
+    if (project.hasProperty("dryRun")) {
+        args += ["--dry-run"]
+    }
+    if (project.hasProperty("verbose")) {
+        args += ["--verbose"]
+    }
+}
+
 tasks.withType(Test).configureEach {
     // Creates half as many forks as there are CPU cores.
     maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
