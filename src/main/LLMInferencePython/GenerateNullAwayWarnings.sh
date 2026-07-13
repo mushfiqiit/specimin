@@ -117,9 +117,14 @@ if [[ "$PROJECT" == "gson" ]]; then
     # sources, which would otherwise silently produce zero NullAway warnings.
     mkdir -p "$OUT_DIR"
     echo "Compiling with NullAway (output -> $REPORT_FILE) ..."
+    # JSpecifyMode=false + RequireExplicitNullMarking:OFF: gson has no @NullMarked
+    # annotations anywhere, and NullAway's JSpecify mode (default since ~0.11) refuses
+    # to analyze anything without them, only emitting a RequireExplicitNullMarking
+    # advisory instead. Force the legacy AnnotatedPackages heuristic so NullAway
+    # actually analyzes $ANNOTATED_PACKAGES for real nullability issues.
     ( cd "$GSON_MODULE_DIR" && mvn -Pnullaway \
         -Dnullaway.version="$NULLAWAY_VERSION" \
-        -Dnullaway.checks="-Xep:NullAway:$NULLAWAY_SEVERITY -XepOpt:NullAway:AnnotatedPackages=$ANNOTATED_PACKAGES" \
+        -Dnullaway.checks="-Xep:NullAway:$NULLAWAY_SEVERITY -XepOpt:NullAway:AnnotatedPackages=$ANNOTATED_PACKAGES -XepOpt:NullAway:JSpecifyMode=false -Xep:RequireExplicitNullMarking:OFF" \
         clean compile ) > "$REPORT_FILE" 2>&1 || true
 
     # ── Extract warnings ──────────────────────────────────────────────────────
