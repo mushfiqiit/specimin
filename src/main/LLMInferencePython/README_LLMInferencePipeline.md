@@ -35,8 +35,7 @@ override them for your setup):
 | Variable | Used by | Meaning |
 |----------|---------|---------|
 | `EVENTBUS_SRC_ROOT` | most | EventBus Java source root (e.g. `.../EventBus/EventBus/src`) |
-| `NULLAWAY_WARNINGS_FILE` | ExtractWarningMethods | the initial NullAway warnings file |
-| `WARNING_METHODS_FILE` | ExtractWarningMethods, RunSpeciminAll | derived target list (default: next to the warnings file) |
+| `WARNING_METHODS_FILE` | RunSpeciminAll | derived target list (default: next to the warnings file) |
 | `SPECIMIN_DIR` | RunSpeciminAll | Specimin checkout (has `gradlew`) |
 | `SPECIMIN_OUT` | RunSpeciminAll, RunNullAway, RunLLMInference | output dir for slices |
 | `JAR_PATH` | RunSpeciminAll | Specimin `--jarPath` directory |
@@ -58,8 +57,13 @@ inference loop.
 #    Produces nullaway-warnings.txt next to your EventBus checkout.
 EVENTBUS_DIR=/path/to/EventBus ./GenerateNullAwayWarnings.sh
 
-# 1. Derive one Specimin target (enclosing method/field) per warning.
-python3 ExtractWarningMethods.py          # nullaway-warnings.txt -> warningMethods.txt
+# 1. Derive one Specimin target (enclosing method/constructor) per warning, via a
+#    real JavaParser AST instead of regex/brace-scanning. Reads NullAway's and/or
+#    the Index Checker's warnings file; pass whichever of the two flags apply.
+./gradlew extractWarningMethods \
+    -Psrc=$EVENTBUS_SRC_ROOT \
+    -PnullawayWarnings=/path/to/nullaway-warnings.txt \
+    -Poutput=/path/to/warningMethods.txt
 
 # 2. Run Specimin (plain) on each target + extract usage context per slice.
 python3 RunSpeciminAll.py                 # -> SPECIMIN_OUT/NN_name/ + usage-context.txt
@@ -106,7 +110,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 | Script | Role |
 |--------|------|
 | `GenerateNullAwayWarnings.sh` | Runs plain NullAway on the original EventBus core; writes `nullaway-warnings.txt`. |
-| `ExtractWarningMethods.py` | Maps each warning line to its enclosing method/field (a Specimin target). |
+| `extractWarningMethods` (Gradle task, `org.checkerframework.specimin.warningmethods.WarningMethodExtractor`) | AST-based (JavaParser): maps each NullAway/Index Checker warning line to its enclosing method/constructor (a Specimin target); a method flagged by both is only listed once. Replaces the old regex-based `ExtractWarningMethods.py`. |
 | `RunSpeciminAll.py` | Runs Specimin per target; writes a minimal slice + `usage-context.txt`. |
 | `ExtractUsageContext.py` | (called by the above) extracts field-usage snippets from the original source. |
 | `FixSpeciminNullInits.py` | Removes spurious `= null` field stubs Specimin adds. |

@@ -25,7 +25,7 @@ The result is rendered as a compact text block that RunLLMInferenceAll.py splice
 into the prompt. It is *context only* — never compiled, never annotated.
 
 Like the rest of this pipeline, references are located with lightweight
-brace/regex Java scanning (reusing the helpers in ExtractWarningMethods), not a
+brace/regex Java scanning (reusing the helpers in JavaSourceScanning), not a
 full symbol solver. The default scope is each field's declaring file (high
 precision); ``repo`` widens to every source file (more recall, more noise).
 
@@ -43,7 +43,7 @@ import re
 import sys
 import pathlib
 
-from ExtractWarningMethods import (
+from JavaSourceScanning import (
     clean_lines,
     get_package,
     get_class_stack_at,

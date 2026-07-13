@@ -1,67 +1,23 @@
 #!/usr/bin/env python3
 """
-ExtractWarningMethods.py
+JavaSourceScanning.py
 
-Reads warning-location lines from nullaway-warnings.txt AND
-index-checker-warnings.log, finds the enclosing method or constructor for
-each warning, and writes a deduplicated list to warningMethods.txt (one
-fully-qualified Specimin-style target per line).
+Lightweight brace/regex Java source scanning helpers, shared by
+PreserveUsages.py and ExtractUsageContext.py to locate field/method
+declarations and their enclosing class at a given source line.
 
-  com.google.gson.Gson#toJson(Object, Type, JsonWriter)
-  com.google.gson.internal.LinkedTreeMap#size()
-  ...
-
-Both tools emit the same underlying javac diagnostic shape
-('<file>:<line>: error|warning: [Tag] message'), so a single location matcher
-handles both; each input file is optional, but at least one must exist.
-A method flagged by both NullAway and the Index Checker is only listed once.
-
-Field-level warnings (where the warning is on a bare field declaration rather
-than inside a method body) are skipped because they have no callable signature.
-
-Usage:
-    python3 ExtractWarningMethods.py
-
-Paths can be overridden via environment variables:
-    NULLAWAY_WARNINGS_FILE       path to nullaway-warnings.txt
-    INDEX_CHECKER_WARNINGS_FILE  path to index-checker-warnings.log
-    WARNING_METHODS_FILE         output file (default: next to NULLAWAY_WARNINGS_FILE)
+Not a real parser: it strips comments/strings and tracks brace depth rather
+than building an AST. This module previously lived inside
+ExtractWarningMethods.py; that script has been replaced by the AST-based
+(JavaParser) `extractWarningMethods` Gradle task in the Specimin Java project
+(org.checkerframework.specimin.warningmethods.WarningMethodExtractor), which
+does not need these helpers, but PreserveUsages.py and ExtractUsageContext.py
+still do, so the helpers were kept here rather than deleted.
 """
 from __future__ import annotations
 
-import os
 import re
-import sys
-import pathlib
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-def _path(env_name: str, default: str) -> pathlib.Path:
-    return pathlib.Path(os.environ.get(env_name, default)).expanduser()
-
-NULLAWAY_WARNINGS_FILE = _path(
-    "NULLAWAY_WARNINGS_FILE",
-    "~/Documents/gson/nullaway-warnings.txt",
-)
-INDEX_CHECKER_WARNINGS_FILE = _path(
-    "INDEX_CHECKER_WARNINGS_FILE",
-    "~/Documents/gson/index-checker-warnings.log",
-)
-WARNING_METHODS_FILE = _path(
-    "WARNING_METHODS_FILE",
-    str(pathlib.Path(
-        os.environ.get("NULLAWAY_WARNINGS_FILE", "~/Documents/gson/nullaway-warnings.txt")
-    ).expanduser().parent / "warningMethods.txt"),
-)
-
-# Sources to read, in the order their locations get processed. Each is
-# (path, label); a missing file is skipped rather than treated as an error,
-# so this also works with just one of the two warning files present.
-WARNING_SOURCES = [
-    (NULLAWAY_WARNINGS_FILE, "NullAway"),
-    (INDEX_CHECKER_WARNINGS_FILE, "Index Checker"),
-]
-
-# ── Java source helpers (shared with RunSpeciminAll.py) ────────────────────────
 
 def strip_strings_and_line_comment(line: str) -> str:
     result, i, n = [], 0, len(line)
@@ -300,116 +256,3 @@ def innermost(spans, target_idx):
             if best is None or span[0] > best[0]:
                 best = span
     return best
-
-
-# ── Location parsing ───────────────────────────────────────────────────────────
-# Matches the javac diagnostic location line both NullAway and the Checker
-# Framework's Index Checker emit, e.g.:
-#   /path/File.java:60: error: [argument] incompatible argument for parameter...
-#   /path/File.java:42: warning: [NullAway] dereferenced expression ... is @Nullable
-# Continuation lines (source snippet, '^' caret, 'found/required:') don't start
-# with '<path>:<line>:' and are naturally skipped.
-_LOCATION_RE = re.compile(r'^(.+?):(\d+):\s*(?:error|warning):\s*\[[^\]]+\]')
-
-
-def parse_locations(txt_file: pathlib.Path) -> list:
-    entries, seen = [], set()
-    for raw in txt_file.read_text(encoding='utf-8').splitlines():
-        m = _LOCATION_RE.match(raw.strip())
-        if not m:
-            continue
-        fp = pathlib.Path(m.group(1))
-        ln = int(m.group(2))
-        if (fp, ln) not in seen:
-            seen.add((fp, ln))
-            entries.append((fp, ln))
-    return entries
-
-
-# ── Method extraction ──────────────────────────────────────────────────────────
-
-def extract_method_target(file_path: pathlib.Path, line_num: int):
-    """
-    Returns a Specimin-style 'pkg.Class#name(Type1, Type2)' string if the
-    warning is inside a method/constructor body, or None if it is on a bare
-    field or unrecognised location.
-    """
-    lines      = file_path.read_text(encoding='utf-8').splitlines()
-    cleaned    = clean_lines(lines)
-    target_idx = line_num - 1
-
-    package     = get_package(lines)
-    class_stack = get_class_stack_at(cleaned, target_idx)
-    if not class_stack:
-        return None
-    fqcn = (package + '.' if package else '') + '.'.join(class_stack)
-
-    method_spans, _field_spans, _init_spans = index_members(cleaned)
-
-    span = innermost(method_spans, target_idx)
-    if span is None:
-        return None
-
-    name, params = parse_method_sig(span[2])
-    if not name:
-        return None
-
-    return f"{fqcn}#{name}({', '.join(params)})"
-
-
-# ── Main ───────────────────────────────────────────────────────────────────────
-
-def main() -> None:
-    available_paths = {p for p, _ in WARNING_SOURCES if p.exists()}
-    if not available_paths:
-        print("ERROR: none of the warning files were found:")
-        for p, label in WARNING_SOURCES:
-            print(f"  [{label}] {p}")
-        sys.exit(1)
-
-    seen_locations, entries = set(), []
-    for path, label in WARNING_SOURCES:
-        if path not in available_paths:
-            print(f"Skipping {label}: {path} not found.")
-            continue
-        locs = parse_locations(path)
-        print(f"Found {len(locs)} {label} warning location(s) in {path}.")
-        for fp, ln in locs:
-            if (fp, ln) not in seen_locations:
-                seen_locations.add((fp, ln))
-                entries.append((fp, ln))
-
-    seen, methods = set(), []
-    skipped = 0
-
-    for fp, ln in entries:
-        try:
-            target = extract_method_target(fp, ln)
-        except (OSError, ValueError) as e:
-            print(f"  [SKIP] {fp.name}:{ln} — {e}")
-            skipped += 1
-            continue
-
-        if target is None:
-            print(f"  [SKIP] {fp.name}:{ln} — not inside a method/constructor")
-            skipped += 1
-            continue
-
-        if target not in seen:
-            seen.add(target)
-            methods.append(target)
-            print(f"  + {target}")
-        else:
-            print(f"  (dup) {fp.name}:{ln} — already listed")
-
-    WARNING_METHODS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WARNING_METHODS_FILE.write_text('\n'.join(methods) + ('\n' if methods else ''),
-                                    encoding='utf-8')
-
-    print(f"\nWrote {len(methods)} unique method target(s) to {WARNING_METHODS_FILE}")
-    if skipped:
-        print(f"Skipped {skipped} warning(s) (field declarations or parse errors).")
-
-
-if __name__ == "__main__":
-    main()

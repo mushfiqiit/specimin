@@ -3,7 +3,7 @@
 #
 # Runs *plain* NullAway on a project's original (un-sliced) sources and writes
 # the warnings to nullaway-warnings.txt. This is the very first step of the
-# LLM-inference pipeline: ExtractWarningMethods.py reads that file.
+# LLM-inference pipeline: the `extractWarningMethods` Gradle task reads that file.
 #
 # Supports two projects, selected via PROJECT (currently defaults to gson):
 #
@@ -173,7 +173,7 @@ if [[ ! -f "$EVENTBUS_DIR/gradlew" || ! -d "$EVENTBUS_DIR/gradle" ]]; then
 fi
 
 # Resolve to an absolute path so Error Prone prints absolute file locations
-# (ExtractWarningMethods.py expects '/abs/path/File.java:LINE: ... [NullAway]').
+# (the extractWarningMethods Gradle task expects '/abs/path/File.java:LINE: ... [NullAway]').
 EVENTBUS_SRC_ROOT="$(cd "$EVENTBUS_SRC_ROOT" && pwd)"
 
 java_count=$(find "$EVENTBUS_SRC_ROOT" -name '*.java' | wc -l | tr -d ' ')
