@@ -106,6 +106,18 @@ if [[ ! -s "$CP_FILE" ]]; then
     exit 1
 fi
 
+# GsonBuildConfig.java (imported by Gson.java / ReflectionHelper.java) isn't a
+# checked-in source: the templating-maven-plugin generates it from
+# src/main/java-templates/ into target/generated-sources/java-templates/ during
+# Maven's generate-sources phase. Run that phase so it exists on disk.
+echo "Running 'mvn generate-sources' so templated sources (e.g. GsonBuildConfig.java) exist ..."
+( cd "$GSON_MODULE_DIR" && mvn -q generate-sources )
+GENERATED_SRC_ROOT="$GSON_MODULE_DIR/target/generated-sources/java-templates"
+if [[ ! -d "$GENERATED_SRC_ROOT" ]]; then
+    echo "ERROR: expected generated sources at $GENERATED_SRC_ROOT but they weren't produced." >&2
+    exit 1
+fi
+
 # ── List the sources to check ────────────────────────────────────────────────
 # Exclude module-info.java: it declares "requires com.google.errorprone.annotations"
 # etc., which only resolve against a --module-path. We compile via a plain
@@ -113,7 +125,7 @@ fi
 # those requires and javac fails with "module not found". The descriptor has
 # no analyzable code anyway, so dropping it doesn't affect the Index Checker's
 # findings.
-find "$GSON_SRC_ROOT" -name '*.java' ! -name 'module-info.java' > "$SOURCES_FILE"
+find "$GSON_SRC_ROOT" "$GENERATED_SRC_ROOT" -name '*.java' ! -name 'module-info.java' > "$SOURCES_FILE"
 
 # ── Run the Index Checker ────────────────────────────────────────────────────
 echo "Running the Index Checker (stdout -> $OUT_LOG, warnings -> $WARN_FILE) ..."
