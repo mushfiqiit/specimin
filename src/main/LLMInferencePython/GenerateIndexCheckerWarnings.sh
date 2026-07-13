@@ -107,7 +107,13 @@ if [[ ! -s "$CP_FILE" ]]; then
 fi
 
 # ── List the sources to check ────────────────────────────────────────────────
-find "$GSON_SRC_ROOT" -name '*.java' > "$SOURCES_FILE"
+# Exclude module-info.java: it declares "requires com.google.errorprone.annotations"
+# etc., which only resolve against a --module-path. We compile via a plain
+# -classpath (unnamed module), so a named module in the source set can't see
+# those requires and javac fails with "module not found". The descriptor has
+# no analyzable code anyway, so dropping it doesn't affect the Index Checker's
+# findings.
+find "$GSON_SRC_ROOT" -name '*.java' ! -name 'module-info.java' > "$SOURCES_FILE"
 
 # ── Run the Index Checker ────────────────────────────────────────────────────
 echo "Running the Index Checker (stdout -> $OUT_LOG, warnings -> $WARN_FILE) ..."
