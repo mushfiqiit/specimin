@@ -50,7 +50,9 @@
 #   OUT_DIR             where to write the warnings/report
 #                         (default: $EVENTBUS_DIR for eventbus, $GSON_DIR for gson)
 #   NULLAWAY_SEVERITY   WARN or ERROR                    (default: WARN)
-#   NULLAWAY_VERSION    NullAway version                 (default: 0.10.10)
+#   NULLAWAY_VERSION    NullAway version
+#                         (default: 0.13.7 for gson, 0.10.10 for eventbus — must stay
+#                         compatible with that project's pinned Error Prone version)
 #   ANNOTATED_PACKAGES  NullAway:AnnotatedPackages
 #                         (default: org.greenrobot.eventbus for eventbus, com.google.gson for gson)
 #
@@ -83,7 +85,10 @@ if [[ "$PROJECT" == "gson" ]]; then
     OUT_DIR="${OUT_DIR:-$GSON_DIR}"
     ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-com.google.gson}"
     NULLAWAY_SEVERITY="${NULLAWAY_SEVERITY:-WARN}"
-    NULLAWAY_VERSION="${NULLAWAY_VERSION:-0.10.10}"
+    # 0.10.10 (used by the EventBus/Gradle path below) predates gson's much
+    # newer error_prone_core (2.49.0) and reaches into internal Error Prone
+    # classes that no longer exist there, causing NoClassDefFoundError.
+    NULLAWAY_VERSION="${NULLAWAY_VERSION:-0.13.7}"
 
     REPORT_FILE="$OUT_DIR/nullaway-report.txt"
     WARN_FILE="$OUT_DIR/nullaway-warnings.txt"
