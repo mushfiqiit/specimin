@@ -2,13 +2,19 @@
 """
 ExtractWarningMethods.py
 
-Reads nullaway-warnings.txt, finds the enclosing method or constructor for
+Reads warning-location lines from nullaway-warnings.txt AND
+index-checker-warnings.log, finds the enclosing method or constructor for
 each warning, and writes a deduplicated list to warningMethods.txt (one
 fully-qualified Specimin-style target per line).
 
-  org.greenrobot.eventbus.EventBus#subscribe(Object, SubscriberMethod)
-  org.greenrobot.eventbus.PendingPost#PendingPost(Object, Subscription)
+  com.google.gson.Gson#toJson(Object, Type, JsonWriter)
+  com.google.gson.internal.LinkedTreeMap#size()
   ...
+
+Both tools emit the same underlying javac diagnostic shape
+('<file>:<line>: error|warning: [Tag] message'), so a single location matcher
+handles both; each input file is optional, but at least one must exist.
+A method flagged by both NullAway and the Index Checker is only listed once.
 
 Field-level warnings (where the warning is on a bare field declaration rather
 than inside a method body) are skipped because they have no callable signature.
@@ -17,9 +23,9 @@ Usage:
     python3 ExtractWarningMethods.py
 
 Paths can be overridden via environment variables:
-    NULLAWAY_WARNINGS_FILE   path to nullaway-warnings.txt
-    EVENTBUS_SRC_ROOT        root of the Java source tree
-    WARNING_METHODS_FILE     output file (default: same dir as warnings file)
+    NULLAWAY_WARNINGS_FILE       path to nullaway-warnings.txt
+    INDEX_CHECKER_WARNINGS_FILE  path to index-checker-warnings.log
+    WARNING_METHODS_FILE         output file (default: next to NULLAWAY_WARNINGS_FILE)
 """
 from __future__ import annotations
 
@@ -34,21 +40,26 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
+    "~/Documents/gson/nullaway-warnings.txt",
 )
-EVENTBUS_SRC_ROOT = _path(
-    "EVENTBUS_SRC_ROOT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src",
+INDEX_CHECKER_WARNINGS_FILE = _path(
+    "INDEX_CHECKER_WARNINGS_FILE",
+    "~/Documents/gson/index-checker-warnings.log",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
     str(pathlib.Path(
-        os.environ.get(
-            "NULLAWAY_WARNINGS_FILE",
-            "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
-        )
-    ).parent / "warningMethods.txt"),
+        os.environ.get("NULLAWAY_WARNINGS_FILE", "~/Documents/gson/nullaway-warnings.txt")
+    ).expanduser().parent / "warningMethods.txt"),
 )
+
+# Sources to read, in the order their locations get processed. Each is
+# (path, label); a missing file is skipped rather than treated as an error,
+# so this also works with just one of the two warning files present.
+WARNING_SOURCES = [
+    (NULLAWAY_WARNINGS_FILE, "NullAway"),
+    (INDEX_CHECKER_WARNINGS_FILE, "Index Checker"),
+]
 
 # ── Java source helpers (shared with RunSpeciminAll.py) ────────────────────────
 
@@ -292,21 +303,23 @@ def innermost(spans, target_idx):
 
 
 # ── Location parsing ───────────────────────────────────────────────────────────
+# Matches the javac diagnostic location line both NullAway and the Checker
+# Framework's Index Checker emit, e.g.:
+#   /path/File.java:60: error: [argument] incompatible argument for parameter...
+#   /path/File.java:42: warning: [NullAway] dereferenced expression ... is @Nullable
+# Continuation lines (source snippet, '^' caret, 'found/required:') don't start
+# with '<path>:<line>:' and are naturally skipped.
+_LOCATION_RE = re.compile(r'^(.+?):(\d+):\s*(?:error|warning):\s*\[[^\]]+\]')
+
 
 def parse_locations(txt_file: pathlib.Path) -> list:
     entries, seen = [], set()
     for raw in txt_file.read_text(encoding='utf-8').splitlines():
-        raw = raw.strip()
-        if not raw or '[NullAway]' not in raw:
+        m = _LOCATION_RE.match(raw.strip())
+        if not m:
             continue
-        parts = raw.split(':')
-        if len(parts) < 2:
-            continue
-        fp = pathlib.Path(parts[0])
-        try:
-            ln = int(parts[1])
-        except ValueError:
-            continue
+        fp = pathlib.Path(m.group(1))
+        ln = int(m.group(2))
         if (fp, ln) not in seen:
             seen.add((fp, ln))
             entries.append((fp, ln))
@@ -347,16 +360,24 @@ def extract_method_target(file_path: pathlib.Path, line_num: int):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    for path, label in [
-        (NULLAWAY_WARNINGS_FILE, "nullaway-warnings.txt"),
-        (EVENTBUS_SRC_ROOT,      "EventBus src root"),
-    ]:
-        if not path.exists():
-            print(f"ERROR: {label} not found:\n  {path}")
-            sys.exit(1)
+    available_paths = {p for p, _ in WARNING_SOURCES if p.exists()}
+    if not available_paths:
+        print("ERROR: none of the warning files were found:")
+        for p, label in WARNING_SOURCES:
+            print(f"  [{label}] {p}")
+        sys.exit(1)
 
-    entries = parse_locations(NULLAWAY_WARNINGS_FILE)
-    print(f"Found {len(entries)} NullAway warning location(s).")
+    seen_locations, entries = set(), []
+    for path, label in WARNING_SOURCES:
+        if path not in available_paths:
+            print(f"Skipping {label}: {path} not found.")
+            continue
+        locs = parse_locations(path)
+        print(f"Found {len(locs)} {label} warning location(s) in {path}.")
+        for fp, ln in locs:
+            if (fp, ln) not in seen_locations:
+                seen_locations.add((fp, ln))
+                entries.append((fp, ln))
 
     seen, methods = set(), []
     skipped = 0
