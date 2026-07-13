@@ -5,17 +5,18 @@
 # the warnings to nullaway-warnings.txt. This is the very first step of the
 # LLM-inference pipeline: ExtractWarningMethods.py reads that file.
 #
-# Supports two projects, selected via PROJECT:
+# Supports two projects, selected via PROJECT (currently defaults to gson):
 #
-#   PROJECT=eventbus (default) - EventBus core. Builds a small self-contained
-#     Gradle project (in $BUILD_DIR) whose source set points at the EventBus
-#     core sources, applies the Error Prone + NullAway plugins, and compiles.
+#   PROJECT=gson (default, for now) - Gson. Runs Gson's own Maven build with
+#     `-Pnullaway`, an opt-in profile that adds NullAway as an extra Error
+#     Prone check (Gson already runs Error Prone on every build). That
+#     profile must exist in gson/pom.xml first — see the "Gson repo setup"
+#     section below.
+#
+#   PROJECT=eventbus - EventBus core. Builds a small self-contained Gradle
+#     project (in $BUILD_DIR) whose source set points at the EventBus core
+#     sources, applies the Error Prone + NullAway plugins, and compiles.
 #     Does NOT touch your real multi-module EventBus build.
-#
-#   PROJECT=gson - Gson. Runs Gson's own Maven build with `-Pnullaway`, an
-#     opt-in profile that adds NullAway as an extra Error Prone check (Gson
-#     already runs Error Prone on every build). That profile must exist in
-#     gson/pom.xml first — see the "Gson repo setup" section below.
 #
 # Requirements:
 #   - PROJECT=eventbus: Java 11+ (Java 17 recommended) and network access the
@@ -45,7 +46,7 @@
 # rest of the pipeline.
 #
 # Common:
-#   PROJECT             eventbus (default) or gson
+#   PROJECT             gson (default, for now) or eventbus
 #   OUT_DIR             where to write the warnings/report
 #                         (default: $EVENTBUS_DIR for eventbus, $GSON_DIR for gson)
 #   NULLAWAY_SEVERITY   WARN or ERROR                    (default: WARN)
@@ -65,14 +66,14 @@
 #   GSON_MODULE_DIR     the "gson" library module (pom.xml + src) (default: $GSON_DIR/gson)
 #
 # Usage:
-#   ./GenerateNullAwayWarnings.sh
-#   EVENTBUS_DIR=~/code/EventBus ./GenerateNullAwayWarnings.sh
-#   PROJECT=gson ./GenerateNullAwayWarnings.sh
-#   PROJECT=gson GSON_DIR=~/code/gson ./GenerateNullAwayWarnings.sh
+#   ./GenerateNullAwayWarnings.sh                        # gson, the current default
+#   GSON_DIR=~/code/gson ./GenerateNullAwayWarnings.sh
+#   PROJECT=eventbus ./GenerateNullAwayWarnings.sh
+#   PROJECT=eventbus EVENTBUS_DIR=~/code/EventBus ./GenerateNullAwayWarnings.sh
 
 set -euo pipefail
 
-PROJECT="${PROJECT:-eventbus}"
+PROJECT="${PROJECT:-gson}"
 DIVIDER="$(printf '─%.0s' {1..60})"
 
 if [[ "$PROJECT" == "gson" ]]; then
