@@ -8,7 +8,6 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.NameExpr;
-import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.declarations.ResolvedValueDeclaration;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
@@ -103,7 +102,7 @@ public final class JavaProjectIndex {
         } else if (candidate instanceof FieldAccessExpr fae) {
           return Optional.of(fae.resolve());
         }
-      } catch (UnsolvedSymbolException | RuntimeException ignored) {
+      } catch (RuntimeException ignored) {
         // Keep looking -- another candidate on the same line may resolve.
       }
     }

@@ -5,7 +5,6 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.NameExpr;
-import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.declarations.ResolvedValueDeclaration;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -52,7 +51,7 @@ public final class UsageContextCollector {
               candidate instanceof NameExpr ne
                   ? ne.resolve()
                   : ((FieldAccessExpr) candidate).resolve();
-        } catch (UnsolvedSymbolException | RuntimeException e) {
+        } catch (RuntimeException e) {
           continue;
         }
         Optional<DeclarationKey> key = DeclarationKey.of(resolved);
