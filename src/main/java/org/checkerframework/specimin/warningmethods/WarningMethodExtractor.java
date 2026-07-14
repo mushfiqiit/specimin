@@ -71,11 +71,13 @@ public final class WarningMethodExtractor {
     boolean verbose = Boolean.parseBoolean(opts.getOrDefault("verbose", "false"));
 
     List<NamedSource> sources = new ArrayList<>();
-    if (opts.containsKey("nullaway-warnings")) {
-      sources.add(new NamedSource(Paths.get(opts.get("nullaway-warnings")), "NullAway"));
+    String nullawayWarnings = opts.get("nullaway-warnings");
+    if (nullawayWarnings != null) {
+      sources.add(new NamedSource(Paths.get(nullawayWarnings), "NullAway"));
     }
-    if (opts.containsKey("index-checker-warnings")) {
-      sources.add(new NamedSource(Paths.get(opts.get("index-checker-warnings")), "Index Checker"));
+    String indexCheckerWarnings = opts.get("index-checker-warnings");
+    if (indexCheckerWarnings != null) {
+      sources.add(new NamedSource(Paths.get(indexCheckerWarnings), "Index Checker"));
     }
     if (sources.isEmpty()) {
       System.err.println(

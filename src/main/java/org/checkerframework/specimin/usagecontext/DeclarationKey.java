@@ -4,6 +4,7 @@ import com.github.javaparser.resolution.declarations.ResolvedFieldDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedValueDeclaration;
 import java.util.Objects;
 import java.util.Optional;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * A stable string identity for a resolved declaration, usable across separately-parsed
@@ -39,7 +40,7 @@ public final class DeclarationKey {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (!(o instanceof DeclarationKey other)) {
       return false;
     }
