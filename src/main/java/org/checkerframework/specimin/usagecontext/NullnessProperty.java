@@ -1,5 +1,6 @@
 package org.checkerframework.specimin.usagecontext;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,7 +42,9 @@ public final class NullnessProperty implements Property {
     if (!m.find()) {
       return Optional.empty();
     }
-    String expr = m.group(1).trim();
+    // Group 1 is a mandatory (non-optional) capturing group, so it always matches once
+    // m.find() succeeds; requireNonNull just tells the Nullness Checker that.
+    String expr = Objects.requireNonNull(m.group(1)).trim();
     int dot = expr.lastIndexOf('.');
     return Optional.of(dot >= 0 ? expr.substring(dot + 1) : expr);
   }

@@ -2,6 +2,7 @@ package org.checkerframework.specimin.usagecontext;
 
 import java.nio.file.Path;
 import java.util.Objects;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /** A (file, line) key used to look up whether the checker flagged a given source line. */
 public final class FileLine {
@@ -15,7 +16,7 @@ public final class FileLine {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (!(o instanceof FileLine other)) {
       return false;
     }

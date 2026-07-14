@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,10 +33,12 @@ public final class DiagnosticParser {
       if (!m.matches()) {
         continue;
       }
-      Path file = Path.of(m.group(1)).normalize();
-      int lineNo = Integer.parseInt(m.group(2));
-      String checkerKey = m.group(3).trim();
-      String message = m.group(4).trim();
+      // All four groups are mandatory (non-optional) capturing groups, so they always match
+      // once m.matches() succeeds; requireNonNull just tells the Nullness Checker that.
+      Path file = Path.of(Objects.requireNonNull(m.group(1))).normalize();
+      int lineNo = Integer.parseInt(Objects.requireNonNull(m.group(2)));
+      String checkerKey = Objects.requireNonNull(m.group(3)).trim();
+      String message = Objects.requireNonNull(m.group(4)).trim();
       out.add(new Diagnostic(file, lineNo, checkerKey, message));
     }
     return out;
