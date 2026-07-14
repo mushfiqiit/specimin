@@ -2,19 +2,18 @@
 """
 RunSpeciminAll.py
 
-Reads nullaway-warnings.txt, derives a Specimin target for each NullAway
-warning, and runs Specimin to produce a reduced program per unique target
-under SPECIMIN_OUT.
+Reads warningMethods.txt (produced by ExtractWarningMethods.py from
+nullaway-warnings.txt and/or index-checker-warnings.log -- one deduplicated
+Specimin target per line, regardless of which checker originally flagged it)
+and runs Specimin to produce a reduced program per unique target under
+SPECIMIN_OUT.
 
-A warning line looks like:
-    /abs/path/To/File.java:LINE: error: [NullAway] <message>
+Each line of warningMethods.txt is already a fully-qualified Specimin target:
+    pkg.Class#method(Type1, Type2)
+    pkg.Class#Constructor(Type1)
 
-For each warning the script finds the *enclosing member* of the warning line
-by scanning the brace structure of the Java file:
-  * inside a method/constructor body  -> --targetMethod "pkg.Class#name(Type1, Type2)"
-  * on a field declaration            -> --targetField  "pkg.Class#fieldName"
-  * inside a static/instance initializer block
-                                      -> --targetField for the field being assigned
+Currently points at gson by default (see EVENTBUS_SRC_ROOT below); the
+mechanism itself is project-agnostic.
 
 Specimin runs plain (one minimal slice per target). After each slice is
 generated, the lines elsewhere in the original source that use the target's
@@ -49,20 +48,23 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/nullaway-warnings.txt",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
     str(pathlib.Path(
         os.environ.get(
             "NULLAWAY_WARNINGS_FILE",
-            "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
+            "/Users/mushfiqurrahmanchowdhury/Documents/gson/nullaway-warnings.txt",
         )
     ).parent / "warningMethods.txt"),
 )
+# The Java source root of the project being sliced. Despite the name (kept for
+# compatibility with ExtractUsageContext.py/PreserveUsages.py, which also read
+# this env var), this currently points at gson's "gson" module, not EventBus.
 EVENTBUS_SRC_ROOT = _path(
     "EVENTBUS_SRC_ROOT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/gson/src/main/java",
 )
 SPECIMIN_DIR = _path(
     "SPECIMIN_DIR",
@@ -70,9 +72,13 @@ SPECIMIN_DIR = _path(
 )
 SPECIMIN_OUT = _path(
     "SPECIMIN_OUT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/specimin-out",
 )
-JAR_PATH = _path("JAR_PATH", str(pathlib.Path.home() / "eventbus-deps"))
+# Unlike EventBus's core (zero external dependencies), gson's main module has one
+# real compile-time dependency: com.google.errorprone:error_prone_annotations.
+# Populate this directory before running, e.g. from the gson module directory:
+#   mvn dependency:copy-dependencies -DincludeScope=compile -DoutputDirectory=~/gson-deps
+JAR_PATH = _path("JAR_PATH", str(pathlib.Path.home() / "gson-deps"))
 GRADLEW  = SPECIMIN_DIR / "gradlew"
 
 # ── Usage-context extraction ─────────────────────────────────────────────────────
@@ -487,7 +493,7 @@ def main() -> None:
 
     required = [
         (WARNING_METHODS_FILE, "warningMethods.txt"),
-        (EVENTBUS_SRC_ROOT,    "EventBus src root"),
+        (EVENTBUS_SRC_ROOT,    "project src root (EVENTBUS_SRC_ROOT)"),
     ]
     if not dry_run:
         required += [
