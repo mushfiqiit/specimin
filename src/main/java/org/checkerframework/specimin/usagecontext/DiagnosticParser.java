@@ -5,7 +5,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,13 +33,22 @@ public final class DiagnosticParser {
         continue;
       }
       // All four groups are mandatory (non-optional) capturing groups, so they always match
-      // once m.matches() succeeds; requireNonNull just tells the Nullness Checker that.
-      Path file = Path.of(Objects.requireNonNull(m.group(1))).normalize();
-      int lineNo = Integer.parseInt(Objects.requireNonNull(m.group(2)));
-      String checkerKey = Objects.requireNonNull(m.group(3)).trim();
-      String message = Objects.requireNonNull(m.group(4)).trim();
+      // once m.matches() succeeds; requireGroup just tells the Nullness Checker that.
+      Path file = Path.of(requireGroup(m, 1)).normalize();
+      int lineNo = Integer.parseInt(requireGroup(m, 2));
+      String checkerKey = requireGroup(m, 3).trim();
+      String message = requireGroup(m, 4).trim();
       out.add(new Diagnostic(file, lineNo, checkerKey, message));
     }
     return out;
+  }
+
+  /** Returns {@code m.group(group)}, which must be a mandatory capturing group. */
+  private static String requireGroup(Matcher m, int group) {
+    String value = m.group(group);
+    if (value == null) {
+      throw new IllegalStateException("group " + group + " is mandatory and must match here");
+    }
+    return value;
   }
 }
