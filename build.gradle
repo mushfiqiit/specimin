@@ -213,32 +213,6 @@ tasks.register("fixSpuriousAnnotations", JavaExec) {
     }
 }
 
-// AST-based replacement for the old regex-based ExtractWarningMethods.py. Reads warning locations
-// from NullAway and/or the Index Checker and derives one Specimin --targetMethod per warning.
-// Override with -Psrc=<path> -PnullawayWarnings=<path> -PindexCheckerWarnings=<path> -Poutput=<path>.
-tasks.register("extractWarningMethods", JavaExec) {
-    dependsOn("compileJava")
-    group = "nullaway"
-    description = "Derives one Specimin --targetMethod per NullAway/Index Checker warning via JavaParser."
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = "org.checkerframework.specimin.warningmethods.WarningMethodExtractor"
-    args = [
-        "--src",
-        project.findProperty("src") ?: "/path/to/gson/gson/src/main/java",
-        "--output",
-        project.findProperty("output") ?: "/path/to/gson/warningMethods.txt"
-    ]
-    if (project.hasProperty("nullawayWarnings")) {
-        args += ["--nullaway-warnings", project.findProperty("nullawayWarnings")]
-    }
-    if (project.hasProperty("indexCheckerWarnings")) {
-        args += ["--index-checker-warnings", project.findProperty("indexCheckerWarnings")]
-    }
-    if (project.hasProperty("verbose")) {
-        args += ["--verbose"]
-    }
-}
-
 tasks.withType(Test).configureEach {
     // Creates half as many forks as there are CPU cores.
     maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1

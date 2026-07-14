@@ -5,15 +5,11 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-SPECIMIN_ROOT="$(cd "$DIR/../../.." && pwd)"
 
 echo "═══════════════════════════════════════════════════════════"
 echo "[1/8] Extracting warning methods from NullAway warnings..."
 echo "═══════════════════════════════════════════════════════════"
-( cd "$SPECIMIN_ROOT" && ./gradlew --no-daemon extractWarningMethods \
-    -Psrc="${EVENTBUS_SRC_ROOT:-/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src}" \
-    -PnullawayWarnings="${NULLAWAY_WARNINGS_FILE:-/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt}" \
-    -Poutput="${WARNING_METHODS_FILE:-/Users/mushfiqurrahmanchowdhury/Documents/EventBus/warningMethods.txt}" )
+python3 "$DIR/ExtractWarningMethods.py"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
