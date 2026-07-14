@@ -50,9 +50,10 @@ import re
 import sys
 import pathlib
 
-# Reuse the Java-scanning helpers already defined for the pipeline. This module
-# has no side effects and creates no import cycle.
-from JavaSourceScanning import (
+# Reuse the Java-scanning helpers already defined for the pipeline.  Importing
+# ExtractWarningMethods has no side effects (its main() is guarded) and creates
+# no import cycle (it imports none of the other pipeline modules).
+from ExtractWarningMethods import (
     clean_lines,
     get_package,
     get_class_stack_at,
