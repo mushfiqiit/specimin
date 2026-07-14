@@ -33,11 +33,11 @@ import org.checkerframework.specimin.usagecontext.PathNormalizer;
  * JavaParser and emits its Specimin {@code --targetMethod} signature.
  *
  * <p>The signature text is produced with the exact same JavaParser rendering Specimin itself uses
- * to match {@code --targetMethod} arguments -- {@link JavaParserUtil#removeMethodReturnTypeAndAnnotations}
- * for methods, {@code getDeclarationAsString(false, false, false)} for constructors, mirroring
- * {@code TargetMemberFinderVisitor}'s own handling of each -- so a target emitted here is
- * guaranteed to match what Specimin looks for, with no hand-reconstructed formatting to drift out
- * of sync.
+ * to match {@code --targetMethod} arguments -- {@link
+ * JavaParserUtil#removeMethodReturnTypeAndAnnotations} for methods, {@code
+ * getDeclarationAsString(false, false, false)} for constructors, mirroring {@code
+ * TargetMemberFinderVisitor}'s own handling of each -- so a target emitted here is guaranteed to
+ * match what Specimin looks for, with no hand-reconstructed formatting to drift out of sync.
  *
  * <p>A warning location flagged by more than one checker, or appearing more than once, is only
  * listed once; a warning on a bare field declaration (no enclosing method/constructor) is skipped,
@@ -207,9 +207,9 @@ public final class WarningMethodExtractor {
    * Returns the fully-qualified name of the innermost {@link TypeDeclaration} enclosing {@code
    * node}, built the same way {@code SpeciminStateVisitor} builds {@code
    * currentClassQualifiedName}: the outermost type's own {@link
-   * TypeDeclaration#getFullyQualifiedName()}, with each nested type's simple name appended.
-   * Returns {@link Optional#empty()} for declarations with no ordinary enclosing type (e.g. local
-   * classes), which Specimin does not support as targets either.
+   * TypeDeclaration#getFullyQualifiedName()}, with each nested type's simple name appended. Returns
+   * {@link Optional#empty()} for declarations with no ordinary enclosing type (e.g. local classes),
+   * which Specimin does not support as targets either.
    */
   private static Optional<String> qualifiedEnclosingClassName(Node node) {
     List<TypeDeclaration<?>> stack = new ArrayList<>();
