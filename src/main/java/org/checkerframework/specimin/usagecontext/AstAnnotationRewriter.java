@@ -23,6 +23,8 @@ public final class AstAnnotationRewriter {
   private AstAnnotationRewriter() {}
 
   /**
+   * Rewrites the annotation on the field named by {@code key} within {@code file}.
+   *
    * @param file the file that declares {@code key} (from {@link
    *     JavaProjectIndex#fileDeclaringType})
    * @return true if the annotation was (or, in dry-run mode, would be) rewritten
