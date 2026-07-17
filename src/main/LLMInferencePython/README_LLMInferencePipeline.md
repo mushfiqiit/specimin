@@ -38,11 +38,11 @@ override them for your setup):
 | `NULLAWAY_WARNINGS_FILE` | ExtractWarningMethods | the initial NullAway warnings file |
 | `WARNING_METHODS_FILE` | ExtractWarningMethods, RunSpeciminAll | derived target list (default: next to the warnings file) |
 | `SPECIMIN_DIR` | RunSpeciminAll | Specimin checkout (has `gradlew`) |
-| `SPECIMIN_OUT` | RunSpeciminAll, RunNullAway, RunLLMInference | output dir for slices |
+| `SPECIMIN_OUT` | RunSpeciminAll, RunCheckerAll, RunLLMInference | output dir for slices |
 | `JAR_PATH` | RunSpeciminAll | Specimin `--jarPath` directory |
 | `GROQ_API_KEY` | RunLLMInferenceAll | Groq API key |
 
-> Note: `RunNullAwayAll.sh` and `RunLLMInferenceAll.py` currently hard-code a few
+> Note: `RunCheckerAll.sh` and `RunLLMInferenceAll.py` currently hard-code a few
 > paths (`SPECIMIN_OUT`, `EVENTBUS_DIR`) at the top of the file — edit those to
 > match your machine, or align them with the env vars above.
 
@@ -70,8 +70,9 @@ python3 FixSpeciminNullInits.py
 # 4. Strip @NullUnmarked so NullAway actually checks the slices.
 python3 RemoveNullUnmarked.py
 
-# 5. Run NullAway on each slice -> per-slice nullaway-warnings.txt.
-bash    RunNullAwayAll.sh
+# 5. Run NullAway + the Index Checker on each slice -> per-slice
+#    nullaway-warnings.txt and index-checker-warnings.log.
+CF_HOME=/path/to/checker-framework bash RunCheckerAll.sh
 
 # 6. LLM inference: slice + per-slice warnings + usage-context.txt -> annotations.
 python3 RunLLMInferenceAll.py             # writes <slice>LLMInferenced/ folders
@@ -79,8 +80,8 @@ python3 RunLLMInferenceAll.py             # writes <slice>LLMInferenced/ folders
 # 7. Inject any missing javax.annotation imports.
 python3 AddNonnullImport.py
 
-# 8. Re-run NullAway to verify the inferred annotations.
-bash    RunNullAwayAll.sh
+# 8. Re-run both checkers to verify the inferred annotations.
+CF_HOME=/path/to/checker-framework bash RunCheckerAll.sh
 ```
 
 Stages 1–8 are also wrapped by `RunPipeline.sh` (it assumes stage 0 already ran
@@ -98,7 +99,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 
 > Two `nullaway-warnings.txt` files exist and are easy to confuse: the
 > **top-level** one (stage 0 output, input to stage 1) and the **per-slice** ones
-> written *inside* each `SPECIMIN_OUT/NN_name/` folder by `RunNullAwayAll.sh`
+> written *inside* each `SPECIMIN_OUT/NN_name/` folder by `RunCheckerAll.sh`
 > (read by the LLM step).
 
 ### What each script does
@@ -111,7 +112,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 | `ExtractUsageContext.py` | (called by the above) extracts field-usage snippets from the original source. |
 | `FixSpeciminNullInits.py` | Removes spurious `= null` field stubs Specimin adds. |
 | `RemoveNullUnmarked.py` | Removes `@NullUnmarked` so NullAway checks the slice. |
-| `RunNullAwayAll.sh` | Runs NullAway on every slice; writes per-slice `nullaway-warnings.txt`. |
+| `RunCheckerAll.sh` | Runs NullAway and the Index Checker on every slice; writes per-slice `nullaway-warnings.txt` and `index-checker-warnings.log`. |
 | `RunLLMInferenceAll.py` | Sends slice + warnings + usage-context to the LLM; writes `*LLMInferenced/`. |
 | `AddNonnullImport.py` | Adds missing `javax.annotation.*` imports. |
 | `ApplyAnnotations.java` (`./gradlew applyAnnotations`) | Writes inferred annotations back into the original source. |

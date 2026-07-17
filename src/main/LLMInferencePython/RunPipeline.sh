@@ -31,9 +31,9 @@ python3 "$DIR/RemoveNullUnmarked.py"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "[5/8] Running NullAway on reduced programs..."
+echo "[5/8] Running NullAway + Index Checker on reduced programs..."
 echo "═══════════════════════════════════════════════════════════"
-bash "$DIR/RunNullAwayAll.sh"
+bash "$DIR/RunCheckerAll.sh"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
@@ -49,9 +49,9 @@ python3 "$DIR/AddNonnullImport.py"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "[8/8] Re-running NullAway to verify final annotations..."
+echo "[8/8] Re-running NullAway + Index Checker to verify final annotations..."
 echo "═══════════════════════════════════════════════════════════"
-bash "$DIR/RunNullAwayAll.sh"
+bash "$DIR/RunCheckerAll.sh"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"

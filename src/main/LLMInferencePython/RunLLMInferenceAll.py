@@ -63,7 +63,7 @@ def read_usage_context(folder: pathlib.Path) -> str:
 def read_nullaway_warnings(folder: pathlib.Path) -> str:
     warnings_file = folder / "nullaway-warnings.txt"
     if not warnings_file.exists():
-        return "(nullaway-warnings.txt not found — run RunNullAwayAll.sh first)"
+        return "(nullaway-warnings.txt not found — run RunCheckerAll.sh first)"
     content = warnings_file.read_text(encoding="utf-8").strip()
     if not content:
         return "(nullaway-warnings.txt is empty — no NullAway warnings detected)"
