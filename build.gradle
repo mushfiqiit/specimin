@@ -213,6 +213,28 @@ tasks.register("fixSpuriousAnnotations", JavaExec) {
     }
 }
 
+// Heuristic annotator for the Checker Framework Index Checker, covering the 5 highest-impact
+// heuristics verified against gson's real index-checker-warnings.log (see
+// org.checkerframework.specimin.indexannotator.IndexCheckerAnnotator's Javadoc for the list).
+// Override with -Psrc=<path>; add -PdryRun=true / -Pverbose=true.
+tasks.register("annotateIndexChecker", JavaExec) {
+    dependsOn("compileJava")
+    group = "index-checker"
+    description = "Inserts Index Checker annotations (MinLen, SameLen, NonNegative, etc.) for known warning patterns."
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "org.checkerframework.specimin.indexannotator.IndexCheckerAnnotator"
+    args = [
+        "--src",
+        project.findProperty("src") ?: "/path/to/gson/gson/src/main/java"
+    ]
+    if (project.hasProperty("dryRun")) {
+        args += ["--dry-run"]
+    }
+    if (project.hasProperty("verbose")) {
+        args += ["--verbose"]
+    }
+}
+
 tasks.withType(Test).configureEach {
     // Creates half as many forks as there are CPU cores.
     maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
