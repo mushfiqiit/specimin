@@ -86,11 +86,18 @@ Specimin command for each entry without invoking Specimin or writing
 `warning.txt` — useful for sanity-checking the extraction before running the
 real (network- and JDK-dependent) Specimin build.
 
-## Known limitation (inherited from `LLMInferencePython`)
+## Multi-module roots
 
-`EVENTBUS_SRC_ROOT`/`--root` is a single source root. EventBus warnings that
-originate in a different module (e.g. `EventBusAnnotationProcessor`, which
-has its own `src/` tree) will still be sliced against the core module's
-root and can fail to resolve. This is the same limitation
-`LLMInferencePython/RunSpeciminAll.py` has; fixing it (e.g. deriving the
-root per-module from the warning's file path) is out of scope here.
+Unlike `LLMInferencePython/RunSpeciminAll.py` (which always passes one fixed
+`EVENTBUS_SRC_ROOT`), this pipeline derives `--root` **per target** from the
+warning's own absolute file path: it strips the target's package-relative
+path off the end of that absolute path, leaving whatever "src" directory the
+file actually lives under. So a warning from a different module — e.g.
+`EventBusAnnotationProcessor`, which has its own separate `src/` tree from
+the core `EventBus` module — resolves against ITS OWN module root instead of
+failing with "Specimin could not find the file for the target class".
+`EVENTBUS_SRC_ROOT` is kept only as a fallback for the rare case this
+derivation fails (e.g. the file path recorded in `warningMethods.jsonl`
+doesn't actually end with the computed relative path). Each `RunSpeciminAll.py`
+log line prints the `root` it derived for that target, so a fallback is
+visible immediately.

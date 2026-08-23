@@ -12,13 +12,23 @@ Each entry carries a "kind" of either "method" (sliced with Specimin's
 --targetMethod) or "field" (a bare field declaration, sliced with
 --targetField) -- see ExtractWarningMethods.py.
 
+The --root passed to Specimin is derived PER TARGET from the warning's own
+absolute file path (see derive_root), not one global EVENTBUS_SRC_ROOT: a
+warning from a different module with its own "src" tree (e.g. EventBus's
+core module vs. EventBusAnnotationProcessor) resolves against its own
+module root instead of failing with "Specimin could not find the file for
+the target class". EVENTBUS_SRC_ROOT is kept only as a fallback for the
+rare case derive_root can't compute a root.
+
 This mirrors LLMInferencePython/RunSpeciminAll.py's Specimin-invocation logic,
-with two differences:
+with these differences:
   1. warningMethods.jsonl is not deduplicated by target, so a method/field
      flagged by two different warnings gets two separate slice folders here
      (LLMInferencePython's version collapses them into a single slice).
   2. Each slice folder gets a warning.txt holding the exact warning line the
      slice was generated for (LLMInferencePython's version does not keep this).
+  3. --root is derived per target instead of being one fixed source root, so
+     warnings from other modules (e.g. EventBusAnnotationProcessor) resolve.
 
 Each line of warningMethods.jsonl looks like:
     {"target": "org.greenrobot.eventbus.EventBus#post(Object)", "kind": "method",
@@ -54,7 +64,10 @@ WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
     str(NULLAWAY_WARNINGS_FILE.parent / "warningMethods.jsonl"),
 )
-# Java source root of the project being sliced (EventBus's core module).
+# Default Java source root, used only as a fallback when a target's root
+# can't be derived from its warning's absolute file path (see derive_root
+# below) -- e.g. EventBus's core module vs. EventBusAnnotationProcessor,
+# which are separate module trees with their own "src" directories.
 EVENTBUS_SRC_ROOT = _path(
     "EVENTBUS_SRC_ROOT",
     "~/EventBus/EventBus/src",
@@ -98,6 +111,25 @@ def fqcn_to_rel_file(fqcn: str) -> pathlib.Path:
     return pathlib.Path(fqcn.replace('.', '/') + '.java')
 
 
+def derive_root(abs_file: pathlib.Path, rel_file: pathlib.Path):
+    """
+    Given the warning's absolute source file and the package-relative path
+    computed from its target's FQCN, return the source root R such that
+    R / rel_file == abs_file -- i.e. the actual "src" directory this file
+    lives under -- or None if abs_file doesn't end with rel_file's parts
+    (e.g. the file couldn't be read when the warning was extracted).
+
+    This lets each target use ITS OWN module's source root instead of one
+    global EVENTBUS_SRC_ROOT, so warnings from a different module (e.g.
+    EventBusAnnotationProcessor, which has its own separate "src" tree from
+    EventBus's core module) resolve correctly too.
+    """
+    abs_parts, rel_parts = abs_file.parts, rel_file.parts
+    if len(abs_parts) <= len(rel_parts) or abs_parts[-len(rel_parts):] != rel_parts:
+        return None
+    return pathlib.Path(*abs_parts[:-len(rel_parts)])
+
+
 def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
     """
     Read warningMethods.jsonl. Each non-empty line is a JSON object with a
@@ -108,9 +140,11 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
         {"target": "org.greenrobot.eventbus.EventBus#defaultInstance",
          "kind": "field", "warning": "...", "file": "...", "line": 46}
 
-    Returns a list of (rel_file, target, kind, short_name, warning_text), in
-    file order, WITHOUT deduplication -- the same target can appear more than
-    once if more than one warning was reported inside that method/field.
+    Returns a list of (rel_file, target, kind, short_name, warning_text,
+    abs_file), in file order, WITHOUT deduplication -- the same target can
+    appear more than once if more than one warning was reported inside that
+    method/field. abs_file is used by derive_root to find that target's own
+    module source root.
     """
     entries = []
     for raw in jsonl_file.read_text(encoding='utf-8').splitlines():
@@ -121,6 +155,7 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
         target = record["target"].strip()
         kind = record.get("kind", "method")
         warning_text = record["warning"]
+        abs_file = pathlib.Path(record["file"])
 
         hash_idx = target.find('#')
         if hash_idx == -1:
@@ -133,7 +168,7 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
         short_name = member[:paren] if paren != -1 else member
 
         rel_file = fqcn_to_rel_file(fqcn)
-        entries.append((rel_file, target, kind, short_name, warning_text))
+        entries.append((rel_file, target, kind, short_name, warning_text, abs_file))
     return entries
 
 
@@ -144,12 +179,18 @@ def write_warning_copy(output_dir: pathlib.Path, warning_text: str) -> None:
     (output_dir / "warning.txt").write_text(warning_text + "\n", encoding="utf-8")
 
 
-def run_specimin(rel_file, target, kind, short_name, warning_text, index, dry_run=False) -> int:
+def run_specimin(rel_file, target, kind, short_name, warning_text, abs_file, index, dry_run=False) -> int:
     output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
     target_flag = '--targetMethod' if kind == 'method' else '--targetField'
 
+    root = derive_root(abs_file, rel_file)
+    root_note = ""
+    if root is None:
+        root = EVENTBUS_SRC_ROOT
+        root_note = "  (derive_root failed -- falling back to EVENTBUS_SRC_ROOT)"
+
     specimin_args = [
-        '--root',            str(EVENTBUS_SRC_ROOT),
+        '--root',            str(root),
         '--targetFile',      str(rel_file),
         target_flag,         target,
         '--outputDirectory', str(output_dir),
@@ -162,6 +203,7 @@ def run_specimin(rel_file, target, kind, short_name, warning_text, index, dry_ru
     print(f"\n{'─' * 60}")
     print(f"[{index:02d}] ({kind}) {target}")
     print(f"      out     → {output_dir.name}")
+    print(f"      root    → {root}{root_note}")
     print(f"      warning : {warning_text}")
     print(f"      cmd     : {' '.join(cmd)}")
 
@@ -210,8 +252,8 @@ def main() -> None:
 
     successes, failures = 0, []
 
-    for i, (rel_file, target, kind, short_name, warning_text) in enumerate(entries, start=1):
-        rc = run_specimin(rel_file, target, kind, short_name, warning_text, i, dry_run=dry_run)
+    for i, (rel_file, target, kind, short_name, warning_text, abs_file) in enumerate(entries, start=1):
+        rc = run_specimin(rel_file, target, kind, short_name, warning_text, abs_file, i, dry_run=dry_run)
         if rc == 0:
             successes += 1
         else:
