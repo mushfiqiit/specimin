@@ -17,9 +17,13 @@ its own exact warning line, so RunSpeciminAll.py can later produce one slice
 per *warning* (not one slice per unique method) and drop a copy of the
 originating warning into that slice's folder.
 
-Field-level warnings (the warning is on a bare field declaration rather than
-inside a method body) are skipped because they have no callable signature
-for Specimin to target.
+Field-level warnings (the warning is on a bare field declaration, e.g. an
+uninitialized @NonNull field) are targeted with Specimin's --targetField
+instead of --targetMethod. Only warnings that fall inside an anonymous
+static/instance initializer block (`static { ... }`) are skipped: Specimin
+unconditionally prunes those blocks (see PrunerVisitor#visit(Initializer
+Declaration)), so there is no target that would keep such a warning
+reproducible in a slice.
 
 Usage:
     python3 ExtractWarningMethods.py
@@ -318,13 +322,18 @@ def parse_locations(txt_file: pathlib.Path) -> list:
     return entries
 
 
-# ── Method extraction ──────────────────────────────────────────────────────────
+# ── Target extraction ──────────────────────────────────────────────────────────
 
-def extract_method_target(file_path: pathlib.Path, line_num: int):
+def extract_target(file_path: pathlib.Path, line_num: int):
     """
-    Returns a Specimin-style 'pkg.Class#name(Type1, Type2)' string if the
-    warning is inside a method/constructor body, or None if it is on a bare
-    field or unrecognised location.
+    Returns (kind, target, reason):
+      - ('method', 'pkg.Class#name(Type1, Type2)', None) if the warning is
+        inside a method/constructor body.
+      - ('field', 'pkg.Class#fieldName', None) if the warning is on a bare
+        field declaration (no enclosing method).
+      - (None, None, reason) if neither applies -- reason explains why (e.g.
+        the warning is inside an anonymous static/instance initializer
+        block, which Specimin always strips regardless of target).
     """
     lines      = file_path.read_text(encoding='utf-8').splitlines()
     cleaned    = clean_lines(lines)
@@ -333,20 +342,28 @@ def extract_method_target(file_path: pathlib.Path, line_num: int):
     package     = get_package(lines)
     class_stack = get_class_stack_at(cleaned, target_idx)
     if not class_stack:
-        return None
+        return None, None, "no enclosing class found"
     fqcn = (package + '.' if package else '') + '.'.join(class_stack)
 
-    method_spans, _field_spans, _init_spans = index_members(cleaned)
+    method_spans, field_spans, init_spans = index_members(cleaned)
 
-    span = innermost(method_spans, target_idx)
-    if span is None:
-        return None
+    method_span = innermost(method_spans, target_idx)
+    if method_span is not None:
+        name, params = parse_method_sig(method_span[2])
+        if name:
+            return 'method', f"{fqcn}#{name}({', '.join(params)})", None
 
-    name, params = parse_method_sig(span[2])
-    if not name:
-        return None
+    field_span = innermost(field_spans, target_idx)
+    if field_span is not None and field_span[2]:
+        return 'field', f"{fqcn}#{field_span[2]}", None
 
-    return f"{fqcn}#{name}({', '.join(params)})"
+    if innermost(init_spans, target_idx) is not None:
+        return None, None, (
+            "inside a static/instance initializer block "
+            "(Specimin always removes these, regardless of target)"
+        )
+
+    return None, None, "not inside a method, field, or initializer block"
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -364,24 +381,25 @@ def main() -> None:
 
     for fp, ln, warning_text in locations:
         try:
-            target = extract_method_target(fp, ln)
+            kind, target, reason = extract_target(fp, ln)
         except (OSError, ValueError) as e:
             print(f"  [SKIP] {fp.name}:{ln} — {e}")
             skipped += 1
             continue
 
         if target is None:
-            print(f"  [SKIP] {fp.name}:{ln} — not inside a method/constructor")
+            print(f"  [SKIP] {fp.name}:{ln} — {reason}")
             skipped += 1
             continue
 
         entries.append({
             "target": target,
+            "kind": kind,
             "warning": warning_text,
             "file": str(fp),
             "line": ln,
         })
-        print(f"  + {target}  ({fp.name}:{ln})")
+        print(f"  + [{kind}] {target}  ({fp.name}:{ln})")
 
     WARNING_METHODS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with WARNING_METHODS_FILE.open('w', encoding='utf-8') as f:
@@ -390,7 +408,7 @@ def main() -> None:
 
     print(f"\nWrote {len(entries)} warning entry(ies) (duplicates kept) to {WARNING_METHODS_FILE}")
     if skipped:
-        print(f"Skipped {skipped} warning(s) (field declarations or parse errors).")
+        print(f"Skipped {skipped} warning(s) (see [SKIP] reasons above).")
 
 
 if __name__ == "__main__":
