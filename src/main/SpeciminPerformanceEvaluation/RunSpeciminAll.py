@@ -48,24 +48,24 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
-    "~/EventBus/nullaway-warnings.txt",
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
-    str(NULLAWAY_WARNINGS_FILE.parent / "warningMethods.jsonl"),
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/warningMethods.jsonl"
 )
 # Java source root of the project being sliced (EventBus's core module).
 EVENTBUS_SRC_ROOT = _path(
     "EVENTBUS_SRC_ROOT",
-    "~/EventBus/EventBus/src",
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus",
 )
 SPECIMIN_DIR = _path(
     "SPECIMIN_DIR",
-    "~/specimin",
+    "/Users/mushfiqurrahmanchowdhury/Documents/specimin",
 )
 SPECIMIN_OUT = _path(
     "SPECIMIN_OUT",
-    str(NULLAWAY_WARNINGS_FILE.parent / "specimin-out"),
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/speciminout",
 )
 # EventBus's core module has no external compile-time dependencies, so an
 # empty directory is fine here -- it still needs to exist.
