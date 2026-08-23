@@ -43,7 +43,7 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
-    "~/EventBus/nullaway-warnings.txt",
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
