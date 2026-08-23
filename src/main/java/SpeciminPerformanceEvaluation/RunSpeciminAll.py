@@ -8,16 +8,20 @@ produce a reduced program per entry under SPECIMIN_OUT. After each successful
 Specimin run, the exact NullAway warning line the slice was produced for is
 written into that slice's folder as warning.txt.
 
+Each entry carries a "kind" of either "method" (sliced with Specimin's
+--targetMethod) or "field" (a bare field declaration, sliced with
+--targetField) -- see ExtractWarningMethods.py.
+
 This mirrors LLMInferencePython/RunSpeciminAll.py's Specimin-invocation logic,
 with two differences:
-  1. warningMethods.jsonl is not deduplicated by target method, so a method
+  1. warningMethods.jsonl is not deduplicated by target, so a method/field
      flagged by two different warnings gets two separate slice folders here
      (LLMInferencePython's version collapses them into a single slice).
   2. Each slice folder gets a warning.txt holding the exact warning line the
      slice was generated for (LLMInferencePython's version does not keep this).
 
 Each line of warningMethods.jsonl looks like:
-    {"target": "org.greenrobot.eventbus.EventBus#post(Object)",
+    {"target": "org.greenrobot.eventbus.EventBus#post(Object)", "kind": "method",
      "warning": "/path/EventBus.java:204: warning: [NullAway] ...",
      "file": "/path/EventBus.java", "line": 204}
 
@@ -99,11 +103,14 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
     Read warningMethods.jsonl. Each non-empty line is a JSON object with a
     fully-qualified Specimin target plus the exact warning it came from:
         {"target": "org.greenrobot.eventbus.EventBus#subscribe(Object, SubscriberMethod)",
-         "warning": "...", "file": "...", "line": 42}
+         "kind": "method", "warning": "...", "file": "...", "line": 42}
+    or, for a bare field declaration:
+        {"target": "org.greenrobot.eventbus.EventBus#defaultInstance",
+         "kind": "field", "warning": "...", "file": "...", "line": 46}
 
-    Returns a list of (rel_file, target, short_name, warning_text), in file
-    order, WITHOUT deduplication -- the same target can appear more than once
-    if more than one warning was reported inside that method.
+    Returns a list of (rel_file, target, kind, short_name, warning_text), in
+    file order, WITHOUT deduplication -- the same target can appear more than
+    once if more than one warning was reported inside that method/field.
     """
     entries = []
     for raw in jsonl_file.read_text(encoding='utf-8').splitlines():
@@ -112,6 +119,7 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
             continue
         record = json.loads(raw)
         target = record["target"].strip()
+        kind = record.get("kind", "method")
         warning_text = record["warning"]
 
         hash_idx = target.find('#')
@@ -125,7 +133,7 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
         short_name = member[:paren] if paren != -1 else member
 
         rel_file = fqcn_to_rel_file(fqcn)
-        entries.append((rel_file, target, short_name, warning_text))
+        entries.append((rel_file, target, kind, short_name, warning_text))
     return entries
 
 
@@ -136,13 +144,14 @@ def write_warning_copy(output_dir: pathlib.Path, warning_text: str) -> None:
     (output_dir / "warning.txt").write_text(warning_text + "\n", encoding="utf-8")
 
 
-def run_specimin(rel_file, target, short_name, warning_text, index, dry_run=False) -> int:
+def run_specimin(rel_file, target, kind, short_name, warning_text, index, dry_run=False) -> int:
     output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
+    target_flag = '--targetMethod' if kind == 'method' else '--targetField'
 
     specimin_args = [
         '--root',            str(EVENTBUS_SRC_ROOT),
         '--targetFile',      str(rel_file),
-        '--targetMethod',    target,
+        target_flag,         target,
         '--outputDirectory', str(output_dir),
         '--jarPath',         str(JAR_PATH),
         '--modularityModel', 'nullaway',
@@ -151,7 +160,7 @@ def run_specimin(rel_file, target, short_name, warning_text, index, dry_run=Fals
     cmd = [str(GRADLEW), "--no-daemon", "run", f"--args={args_str}"]
 
     print(f"\n{'─' * 60}")
-    print(f"[{index:02d}] {target}")
+    print(f"[{index:02d}] ({kind}) {target}")
     print(f"      out     → {output_dir.name}")
     print(f"      warning : {warning_text}")
     print(f"      cmd     : {' '.join(cmd)}")
@@ -201,8 +210,8 @@ def main() -> None:
 
     successes, failures = 0, []
 
-    for i, (rel_file, target, short_name, warning_text) in enumerate(entries, start=1):
-        rc = run_specimin(rel_file, target, short_name, warning_text, i, dry_run=dry_run)
+    for i, (rel_file, target, kind, short_name, warning_text) in enumerate(entries, start=1):
+        rc = run_specimin(rel_file, target, kind, short_name, warning_text, i, dry_run=dry_run)
         if rc == 0:
             successes += 1
         else:
