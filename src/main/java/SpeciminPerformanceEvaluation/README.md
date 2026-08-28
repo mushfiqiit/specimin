@@ -3,13 +3,15 @@
 A variant of four of
 [`LLMInferencePython`](../../LLMInferencePython/README_LLMInferencePipeline.md)'s
 stages -- `ExtractWarningMethods.py`, `RunSpeciminAll.py`,
-`FixSpeciminNullInits.py`, `RunCheckerAll.sh`:
+`FixSpeciminNullInits.py`, `RunCheckerAll.sh` -- plus one script of its own,
+`CompareSliceWarnings.py`:
 
 ```bash
 python3 ExtractWarningMethods.py   # nullaway-warnings.txt -> warningMethods.jsonl
 python3 RunSpeciminAll.py          # -> SPECIMIN_OUT/NN_name/ + warning.txt + root.txt
 python3 FixSpeciminNullInits.py    # removes spurious `= null` field stubs Specimin added
 ./RunCheckerAll.sh                 # runs NullAway on each slice -> per-slice nullaway-warnings.txt
+python3 CompareSliceWarnings.py    # did each slice reproduce the warning it was made for?
 ```
 
 `LLMInferencePython`'s `RemoveNullUnmarked.py` step is intentionally not
@@ -158,6 +160,40 @@ Env vars: `SPECIMIN_OUT`, `SPECIMIN_DIR`, `JAR_PATH` (same defaults as
 `org.greenrobot.eventbus`), `NULLAWAY_SEVERITY` (default `WARN`),
 `ERRORPRONE_VERSION` (default `2.18.0`), `NULLAWAY_VERSION` (default
 `0.10.10`), `GRADLE_DIST_VERSION` (default `8.7`).
+
+## CompareSliceWarnings.py
+
+Checks whether each slice actually reproduces the warning it was made for,
+by comparing that slice's `warning.txt` (the original warning) against its
+`nullaway-warnings.txt` (what NullAway found when `RunCheckerAll.sh` ran
+directly on the slice). An entry in `nullaway-warnings.txt` counts as a
+reproduction of `warning.txt`'s warning only if:
+
+- the **file name** matches (basename only — `warning.txt` holds the
+  original source's absolute path, `nullaway-warnings.txt`'s paths are
+  relative to the slice folder, so a full-path comparison would never match
+  even for a correct reproduction), and
+- the **error message** matches (the text after `[NullAway] `), and
+- the **line number differs** — Specimin's slice is a reduced, renumbered
+  copy of the original file, so a genuine reproduction is expected to land
+  on a different line. A same-file, same-message match on the exact same
+  line is treated as an inconclusive near-miss, not a reproduction, and
+  reported as such rather than silently counted either way.
+
+```bash
+python3 CompareSliceWarnings.py
+```
+
+Writes one `reproduction-check.txt` per slice folder (the original warning,
+every finding in that slice's `nullaway-warnings.txt`, which one matched if
+any, and the verdict), and prints a REPRODUCED / NOT REPRODUCED / SKIPPED
+summary across all slices. A slice is SKIPPED (not counted as reproduced or
+not) only when its `warning.txt` is missing or unparseable; a missing or
+empty `nullaway-warnings.txt` (e.g. `RunCheckerAll.sh` hasn't been run yet,
+or the slice's build failed) counts as NOT REPRODUCED, with the reason
+noted in that slice's `reproduction-check.txt`.
+
+Env var: `SPECIMIN_OUT` (same default as the rest of the pipeline).
 
 ## Prerequisites
 
