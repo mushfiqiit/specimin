@@ -74,10 +74,14 @@ rootProject.name = 'specimin-checker-check'
 EOF
 
     # build.gradle -- NullAway via Error Prone, source set is the slice
-    # itself. JSpecifyMode=false + RequireExplicitNullMarking:OFF: EventBus
-    # has no @NullMarked/@NullUnmarked annotations anywhere, so NullAway's
-    # JSpecify mode would otherwise only emit a "please annotate" advisory
-    # instead of actually analyzing the slice.
+    # itself. JSpecifyMode=false: EventBus has no @NullMarked/@NullUnmarked
+    # annotations anywhere, so NullAway's JSpecify mode would otherwise only
+    # emit a "please annotate" advisory instead of actually analyzing the
+    # slice. (No RequireExplicitNullMarking check() here: that's a NullAway
+    # check introduced after 0.10.10, the version EventBus's own
+    # gradle/nullaway.gradle pins -- configuring it against 0.10.10 fails
+    # the build with "RequireExplicitNullMarking is not a valid checker
+    # name" since it isn't registered at that version.)
     cat > "$dir/build.gradle" <<EOF
 plugins {
     id 'java'
@@ -111,7 +115,6 @@ tasks.withType(JavaCompile).configureEach {
         check('NullAway', net.ltgt.gradle.errorprone.CheckSeverity.${NULLAWAY_SEVERITY})
         option('NullAway:AnnotatedPackages', '${ANNOTATED_PACKAGES}')
         option('NullAway:JSpecifyMode', 'false')
-        check('RequireExplicitNullMarking', net.ltgt.gradle.errorprone.CheckSeverity.OFF)
     }
     options.compilerArgs << '-Xmaxwarns' << '10000'
 }
