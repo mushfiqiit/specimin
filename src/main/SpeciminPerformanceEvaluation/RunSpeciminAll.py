@@ -6,7 +6,8 @@ Reads warningMethods.jsonl (produced by ExtractWarningMethods.py in this same
 folder) and runs Specimin once per WARNING (not once per unique method) to
 produce a reduced program per entry under SPECIMIN_OUT. After each successful
 Specimin run, the exact NullAway warning line the slice was produced for is
-written into that slice's folder as warning.txt.
+written into that slice's folder as warning.txt, and the --root used for
+that slice is written as root.txt (read by FixSpeciminNullInits.py).
 
 Each entry carries a "kind" of either "method" (sliced with Specimin's
 --targetMethod) or "field" (a bare field declaration, sliced with
@@ -179,6 +180,17 @@ def write_warning_copy(output_dir: pathlib.Path, warning_text: str) -> None:
     (output_dir / "warning.txt").write_text(warning_text + "\n", encoding="utf-8")
 
 
+def write_root_copy(output_dir: pathlib.Path, root: pathlib.Path) -> None:
+    """
+    Record the --root this slice was generated against, in root.txt. Slices
+    can come from different module source trees (e.g. EventBus's core module
+    vs. EventBusAnnotationProcessor), so downstream tools that need to find a
+    slice's ORIGINAL source file (FixSpeciminNullInits.py) can't assume one
+    global source root either -- they read this instead.
+    """
+    (output_dir / "root.txt").write_text(str(root) + "\n", encoding="utf-8")
+
+
 def run_specimin(rel_file, target, kind, short_name, warning_text, abs_file, index, dry_run=False) -> int:
     output_dir = SPECIMIN_OUT / f"{index:02d}_{short_name}"
     target_flag = '--targetMethod' if kind == 'method' else '--targetField'
@@ -218,6 +230,7 @@ def run_specimin(rel_file, target, kind, short_name, warning_text, abs_file, ind
 
     if result.returncode == 0:
         write_warning_copy(output_dir, warning_text)
+        write_root_copy(output_dir, root)
 
     return result.returncode
 
