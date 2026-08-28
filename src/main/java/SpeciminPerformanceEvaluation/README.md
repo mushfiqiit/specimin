@@ -1,13 +1,22 @@
 # Specimin Performance Evaluation Pipeline
 
-A two-stage variant of
+A variant of four of
 [`LLMInferencePython`](../../LLMInferencePython/README_LLMInferencePipeline.md)'s
-`ExtractWarningMethods.py` + `RunSpeciminAll.py` stages:
+stages -- `ExtractWarningMethods.py`, `RunSpeciminAll.py`,
+`FixSpeciminNullInits.py`, `RunCheckerAll.sh`:
 
 ```bash
 python3 ExtractWarningMethods.py   # nullaway-warnings.txt -> warningMethods.jsonl
-python3 RunSpeciminAll.py          # -> SPECIMIN_OUT/NN_name/ + warning.txt
+python3 RunSpeciminAll.py          # -> SPECIMIN_OUT/NN_name/ + warning.txt + root.txt
+python3 FixSpeciminNullInits.py    # removes spurious `= null` field stubs Specimin added
+./RunCheckerAll.sh                 # runs NullAway on each slice -> per-slice nullaway-warnings.txt
 ```
+
+`LLMInferencePython`'s `RemoveNullUnmarked.py` step is intentionally not
+included: it strips `@NullUnmarked` annotations so NullAway actually checks
+a slice, but EventBus's source has zero uses of `@NullUnmarked` anywhere
+(unlike gson, which this pipeline was adapted from), so for EventBus that
+step is a guaranteed no-op.
 
 It differs from `LLMInferencePython` in these ways:
 
@@ -59,9 +68,20 @@ SPECIMIN_OUT/
   01_post/
     ...slice files...
     warning.txt      <- the exact warning line above
+    root.txt          <- the --root this slice was generated against
   02_post/            (a second warning inside the same method -> a second slice)
     ...
     warning.txt
+    root.txt
+```
+
+After `FixSpeciminNullInits.py` and `RunCheckerAll.sh`, each slice folder
+additionally has:
+
+```
+  01_post/
+    nullaway-report.txt     <- full Gradle build log for this slice alone
+    nullaway-warnings.txt   <- just this slice's [NullAway] findings
 ```
 
 ## Environment variables
@@ -86,18 +106,87 @@ Specimin command for each entry without invoking Specimin or writing
 `warning.txt` — useful for sanity-checking the extraction before running the
 real (network- and JDK-dependent) Specimin build.
 
+## FixSpeciminNullInits.py
+
+Specimin stubs out fields it doesn't need with `= null` (e.g. `private final
+Logger logger = null;`), even when the original field has no initializer.
+Left in place, that spurious `= null` can itself trigger a NullAway warning
+when `RunCheckerAll.sh` checks the slice — one that has nothing to do with
+the warning the slice was produced for. This script compares each slice's
+`.java` files against their original EventBus source and removes `= null`
+from any field the original doesn't actually null-initialize; a field that
+legitimately has `= null` in the original is left untouched.
+
+It resolves each slice's original source using that slice's own `root.txt`
+(not one global root), for the same multi-module reason `RunSpeciminAll.py`
+derives `--root` per target — see "Multi-module roots" below.
+
+```bash
+python3 FixSpeciminNullInits.py             # patch in place
+python3 FixSpeciminNullInits.py --dry-run   # show changes only, don't modify files
+python3 FixSpeciminNullInits.py --verbose   # log every file considered, not just patched ones
+```
+
+Env vars: `SPECIMIN_OUT` (default `~/EventBus/specimin-out`) and
+`EVENTBUS_SRC_ROOT` (default `~/EventBus/EventBus/src`, used only as a
+fallback for a slice folder missing `root.txt`).
+
+## RunCheckerAll.sh
+
+Runs NullAway directly on each slice folder under `SPECIMIN_OUT`: injects a
+throwaway `settings.gradle` + `build.gradle` into the slice (source set =
+the slice itself), copies the Gradle wrapper from `SPECIMIN_DIR`, and runs
+`./gradlew clean compileJava` with NullAway enabled via Error Prone —
+exactly like `EventBus/gradle/nullaway.gradle`'s own configuration
+(`org.greenrobot.eventbus`, Error Prone 2.18.0, NullAway 0.10.10, `WARN`
+severity), so the same finding is reproduced against the slice, not
+suppressed by a different config. Writes `nullaway-report.txt` (full build
+log) and `nullaway-warnings.txt` (just the `[NullAway]` lines, in the exact
+same format `run-nullaway.sh` produces for the whole project) inside that
+slice folder.
+
+Unlike `LLMInferencePython/RunCheckerAll.sh`, this version only runs
+NullAway — no Index Checker, no `CF_HOME` dependency.
+
+```bash
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # see Prerequisites below
+./RunCheckerAll.sh
+```
+
+Env vars: `SPECIMIN_OUT`, `SPECIMIN_DIR`, `JAR_PATH` (same defaults as
+`RunSpeciminAll.py`), plus `ANNOTATED_PACKAGES` (default
+`org.greenrobot.eventbus`), `NULLAWAY_SEVERITY` (default `WARN`),
+`ERRORPRONE_VERSION` (default `2.18.0`), `NULLAWAY_VERSION` (default
+`0.10.10`), `GRADLE_DIST_VERSION` (default `8.7`).
+
+## Prerequisites
+
+Same as the rest of this pipeline (and `LLMInferencePython`): **JDK 17+**
+active (`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`; a conda
+`(base)` shell often shadows this with JDK 11, which fails Specimin's own
+`spotlessJava` build step on Java 16+ source syntax like pattern-matching
+`instanceof`) and network access to Maven Central for Gradle to resolve
+Error Prone / NullAway.
+
 ## Multi-module roots
 
-Unlike `LLMInferencePython/RunSpeciminAll.py` (which always passes one fixed
-`EVENTBUS_SRC_ROOT`), this pipeline derives `--root` **per target** from the
-warning's own absolute file path: it strips the target's package-relative
-path off the end of that absolute path, leaving whatever "src" directory the
-file actually lives under. So a warning from a different module — e.g.
-`EventBusAnnotationProcessor`, which has its own separate `src/` tree from
-the core `EventBus` module — resolves against ITS OWN module root instead of
-failing with "Specimin could not find the file for the target class".
-`EVENTBUS_SRC_ROOT` is kept only as a fallback for the rare case this
-derivation fails (e.g. the file path recorded in `warningMethods.jsonl`
-doesn't actually end with the computed relative path). Each `RunSpeciminAll.py`
-log line prints the `root` it derived for that target, so a fallback is
-visible immediately.
+Unlike `LLMInferencePython` (which always passes one fixed
+`EVENTBUS_SRC_ROOT`), this pipeline derives the source root **per target**
+instead of using one global root, because EventBus warnings can come from
+more than one module's separate `src/` tree (e.g. the core `EventBus`
+module vs. `EventBusAnnotationProcessor`):
+
+- `RunSpeciminAll.py` derives `--root` from the warning's own absolute file
+  path: it strips the target's package-relative path off the end of that
+  absolute path, leaving whatever "src" directory the file actually lives
+  under, then records it as `root.txt` in the slice folder. Without this, a
+  warning from a module other than the one `EVENTBUS_SRC_ROOT` points at
+  fails with "Specimin could not find the file for the target class".
+- `FixSpeciminNullInits.py` reads each slice's `root.txt` to resolve that
+  slice's original source, instead of assuming one global root too.
+
+`EVENTBUS_SRC_ROOT` is kept only as a fallback for the rare case a target's
+root can't be derived this way (e.g. `RunSpeciminAll.py`'s derivation fails,
+or a slice folder predates `root.txt` being written). Each
+`RunSpeciminAll.py` log line prints the `root` it derived for that target,
+so a fallback is visible immediately.
