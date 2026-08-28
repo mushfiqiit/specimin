@@ -173,8 +173,16 @@ reproduction of `warning.txt`'s warning only if:
   original source's absolute path, `nullaway-warnings.txt`'s paths are
   relative to the slice folder, so a full-path comparison would never match
   even for a correct reproduction), and
-- the **error message** matches (the text after `[NullAway] `), and
-- the **line number differs** — Specimin's slice is a reduced, renumbered
+- the **error message** matches (the text after `[NullAway] `), modulo any
+  `(line N)` reference embedded *inside* the message text — some NullAway
+  templates (e.g. "initializer method does not guarantee @NonNull field X
+  `(line N)` is initialized...") embed the referenced field's own
+  declaration line in the message itself, which moves along with the rest
+  of the file when Specimin renumbers it, same as the diagnostic's leading
+  line does. Both messages have every `(line N)` normalized to `(line #)`
+  before comparison, and
+- the **line number** (the diagnostic's own leading line, not one embedded
+  in the message) **differs** — Specimin's slice is a reduced, renumbered
   copy of the original file, so a genuine reproduction is expected to land
   on a different line. A same-file, same-message match on the exact same
   line is treated as an inconclusive near-miss, not a reproduction, and

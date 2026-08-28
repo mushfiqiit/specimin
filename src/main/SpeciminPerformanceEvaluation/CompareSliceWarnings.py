@@ -16,12 +16,23 @@ of warning.txt's warning if and only if
     original source's absolute path, nullaway-warnings.txt's paths are
     relative to the slice folder, so a full-path comparison would never
     match even for a correct reproduction), and
-  - the ERROR MESSAGE matches (the text after "[NullAway] "), and
-  - the LINE NUMBER is DIFFERENT (Specimin's slice is a reduced,
+  - the ERROR MESSAGE matches, MODULO any "(line N)" references INSIDE the
+    message text (the text after "[NullAway] "). Several NullAway message
+    templates -- e.g. "initializer method does not guarantee @NonNull
+    field X (line N) is initialized ..." -- embed the referenced field's
+    OWN declaration line number in the message itself, not just the
+    diagnostic's leading "<file>:<line>:". Specimin's slice is a
+    renumbered copy of the original file, so that embedded number shifts
+    exactly like the leading line number does; comparing it verbatim
+    would reject a genuine reproduction as a message mismatch. Both
+    messages have their "(line N)" occurrences normalized to "(line #)"
+    before comparison, and
+  - the LINE NUMBER (the diagnostic's own leading line, not any embedded
+    in the message) is DIFFERENT -- Specimin's slice is a reduced,
     renumbered version of the original file, so a genuine reproduction is
     expected to land on a different line; a same-file, same-message,
     SAME-line "match" is treated as inconclusive, not a reproduction, and
-    reported separately).
+    reported separately.
 
 Writes ONE result file per slice folder, reproduction-check.txt, containing
 the verdict and the evidence considered. Also prints a summary across all
@@ -59,6 +70,17 @@ RESULT_NAME = "reproduction-check.txt"
 # separately so it can be compared independent of file/line.
 _LOCATION_RE = re.compile(r'^(.+?):(\d+):\s*(?:error|warning):\s*\[([^\]]+)\]\s*(.*)$')
 
+# Some NullAway message templates embed a referenced declaration's own line
+# number in the message text, e.g. "...@NonNull field methodString (line 28)
+# is initialized...". That number moves whenever the file is renumbered
+# (exactly like the diagnostic's own leading line does), so it's masked out
+# before comparing messages -- see normalize_message.
+_LINE_REF_RE = re.compile(r'\(line \d+\)')
+
+
+def normalize_message(message: str) -> str:
+    return _LINE_REF_RE.sub('(line #)', message).strip()
+
 
 class Finding:
     def __init__(self, raw: str, file: str, line: int, tag: str, message: str):
@@ -67,6 +89,7 @@ class Finding:
         self.line = line
         self.tag = tag
         self.message = message.strip()
+        self.normalized_message = normalize_message(self.message)
 
     @property
     def basename(self) -> str:
@@ -136,7 +159,7 @@ def check_slice(slice_dir: pathlib.Path) -> str:
     match = None
     same_line_near_miss = None
     for f in slice_findings:
-        if f.basename != original.basename or f.message != original.message:
+        if f.basename != original.basename or f.normalized_message != original.normalized_message:
             continue
         if f.line != original.line:
             match = f
@@ -147,7 +170,13 @@ def check_slice(slice_dir: pathlib.Path) -> str:
     if match is not None:
         lines.append(f"Matched finding: {match.raw}")
         lines.append(f"  file name matches : {match.basename} == {original.basename}")
-        lines.append(f"  message matches   : yes")
+        if match.message == original.message:
+            lines.append(f"  message matches   : yes (exact)")
+        else:
+            lines.append(f"  message matches   : yes, after normalizing embedded \"(line N)\" references")
+            lines.append(f"    original message   : {original.message}")
+            lines.append(f"    slice message       : {match.message}")
+            lines.append(f"    normalized (both)   : {match.normalized_message}")
         lines.append(f"  line differs      : {original.line} -> {match.line}")
         lines.append("VERDICT: REPRODUCED")
     elif same_line_near_miss is not None:
