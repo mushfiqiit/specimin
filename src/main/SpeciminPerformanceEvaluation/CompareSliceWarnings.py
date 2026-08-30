@@ -36,7 +36,7 @@ of warning.txt's warning if and only if
 
 Writes ONE result file per slice folder, reproduction-check.txt, containing
 the verdict and the evidence considered. Also prints a summary across all
-slices.
+slices, and writes that same summary to SPECIMIN_OUT/summary.txt.
 
 Usage:
     python3 CompareSliceWarnings.py
@@ -64,6 +64,7 @@ SPECIMIN_OUT = _path("SPECIMIN_OUT", "~/EventBus/specimin-out")
 ORIGINAL_WARNING_NAMES = ["warning.txt", "warnings.txt"]
 SLICE_WARNINGS_NAME = "nullaway-warnings.txt"
 RESULT_NAME = "reproduction-check.txt"
+SUMMARY_NAME = "summary.txt"
 
 # Same diagnostic-location shape ExtractWarningMethods.py/RunCheckerAll.sh
 # use: "<file>:<line>: warning: [NullAway] <message>". Captures the message
@@ -219,20 +220,27 @@ def main() -> None:
             not_reproduced.append(folder.name)
 
     total = len(reproduced) + len(not_reproduced) + len(skipped)
-    print(f"\n{'═' * 60}")
-    print(f"Summary: {total} slice folder(s) checked")
-    print(f"  Reproduced     : {len(reproduced)}")
-    print(f"  Not reproduced : {len(not_reproduced)}")
-    print(f"  Skipped        : {len(skipped)}")
+    summary_lines = [
+        f"Summary: {total} slice folder(s) checked",
+        f"  Reproduced     : {len(reproduced)}",
+        f"  Not reproduced : {len(not_reproduced)}",
+        f"  Skipped        : {len(skipped)}",
+    ]
     if not_reproduced:
-        print("\nNot reproduced:")
-        for name in not_reproduced:
-            print(f"  - {name}")
+        summary_lines.append("\nNot reproduced:")
+        summary_lines.extend(f"  - {name}" for name in not_reproduced)
     if skipped:
-        print("\nSkipped:")
-        for name in skipped:
-            print(f"  - {name}")
-    print(f"\nPer-slice details written to each folder's {RESULT_NAME}")
+        summary_lines.append("\nSkipped:")
+        summary_lines.extend(f"  - {name}" for name in skipped)
+    summary_lines.append(f"\nPer-slice details written to each folder's {RESULT_NAME}")
+
+    print(f"\n{'═' * 60}")
+    for line in summary_lines:
+        print(line)
+
+    summary_path = SPECIMIN_OUT / SUMMARY_NAME
+    summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+    print(f"Summary written to {summary_path}")
 
 
 if __name__ == "__main__":
