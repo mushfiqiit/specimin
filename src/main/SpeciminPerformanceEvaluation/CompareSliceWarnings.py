@@ -26,7 +26,20 @@ of warning.txt's warning if and only if
     exactly like the leading line number does; comparing it verbatim
     would reject a genuine reproduction as a message mismatch. Both
     messages have their "(line N)" occurrences normalized to "(line #)"
-    before comparison, and
+    before comparison.
+
+    For the "initializer method does not guarantee @NonNull fields ...
+    are initialized" template specifically, the field LIST is also
+    allowed to differ: a match only requires every field named in the
+    ORIGINAL message to also appear in the slice's message, not an exact
+    set match. Specimin's stubbing can incidentally strip a field
+    initializer that made some other field provably non-null in the
+    original (e.g. replacing `x = SOME_CONSTANT` initializer chains with
+    a stub), which makes NullAway additionally flag that field in the
+    slice. That's a side effect of slicing, not evidence the original
+    finding wasn't reproduced -- so a slice message naming a superset of
+    the original's fields still counts as a match. See
+    initializer_field_names()/messages_match(), and
   - the LINE NUMBER (the diagnostic's own leading line, not any embedded
     in the message) is DIFFERENT -- Specimin's slice is a reduced,
     renumbered version of the original file, so a genuine reproduction is
@@ -81,6 +94,42 @@ _LINE_REF_RE = re.compile(r'\(line \d+\)')
 
 def normalize_message(message: str) -> str:
     return _LINE_REF_RE.sub('(line #)', message).strip()
+
+
+# "initializer method does not guarantee @NonNull fields a (line 1), b (line
+# 2) are initialized along all control-flow paths ..." -- pulls out just the
+# field names, order-independent, so the list can be compared as a set
+# instead of requiring the message text to match verbatim.
+_INIT_FIELDS_RE = re.compile(
+    r'^initializer method does not guarantee @NonNull fields? (?P<fields>.+?) '
+    r'are? initialized along all control-flow paths\b'
+)
+_FIELD_NAME_RE = re.compile(r'(\w+) \(line \d+\)')
+
+
+def initializer_field_names(message: str) -> "list[str] | None":
+    """Returns the field names from an 'initializer method does not
+    guarantee @NonNull fields ...' message, or None if the message doesn't
+    match that template."""
+    m = _INIT_FIELDS_RE.match(message)
+    if not m:
+        return None
+    return _FIELD_NAME_RE.findall(m.group("fields"))
+
+
+def messages_match(original: "Finding", candidate: "Finding") -> bool:
+    """Whether candidate's message counts as the same finding as original's,
+    for the purposes of reproduction. Exact match (modulo line-number
+    normalization) always counts; for the initializer-fields template, a
+    candidate naming a superset of original's fields also counts -- see the
+    module docstring."""
+    if candidate.normalized_message == original.normalized_message:
+        return True
+    original_fields = initializer_field_names(original.message)
+    candidate_fields = initializer_field_names(candidate.message)
+    if original_fields is None or candidate_fields is None:
+        return False
+    return set(original_fields).issubset(candidate_fields)
 
 
 class Finding:
@@ -160,7 +209,7 @@ def check_slice(slice_dir: pathlib.Path) -> str:
     match = None
     same_line_near_miss = None
     for f in slice_findings:
-        if f.basename != original.basename or f.normalized_message != original.normalized_message:
+        if f.basename != original.basename or not messages_match(original, f):
             continue
         if f.line != original.line:
             match = f
@@ -173,11 +222,22 @@ def check_slice(slice_dir: pathlib.Path) -> str:
         lines.append(f"  file name matches : {match.basename} == {original.basename}")
         if match.message == original.message:
             lines.append(f"  message matches   : yes (exact)")
-        else:
+        elif match.normalized_message == original.normalized_message:
             lines.append(f"  message matches   : yes, after normalizing embedded \"(line N)\" references")
             lines.append(f"    original message   : {original.message}")
             lines.append(f"    slice message       : {match.message}")
             lines.append(f"    normalized (both)   : {match.normalized_message}")
+        else:
+            original_fields = initializer_field_names(original.message)
+            match_fields = initializer_field_names(match.message)
+            extra_fields = [name for name in match_fields if name not in original_fields]
+            lines.append(f"  message matches   : yes -- same 'initializer does not guarantee @NonNull")
+            lines.append(f"                       fields' diagnostic; slice also flags additional")
+            lines.append(f"                       field(s) not in the original (likely a side effect")
+            lines.append(f"                       of Specimin's stubbing removing another field's")
+            lines.append(f"                       initializer): {', '.join(extra_fields)}")
+            lines.append(f"    original fields    : {', '.join(original_fields)}")
+            lines.append(f"    slice fields       : {', '.join(match_fields)}")
         lines.append(f"  line differs      : {original.line} -> {match.line}")
         lines.append("VERDICT: REPRODUCED")
     elif same_line_near_miss is not None:
