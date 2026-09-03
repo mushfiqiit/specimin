@@ -39,7 +39,7 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/EventBus/specimin-out}"
+SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/EventBus/speciminout}"
 SPECIMIN_DIR="${SPECIMIN_DIR:-$HOME/Documents/specimin}"
 JAR_PATH="${JAR_PATH:-$HOME/eventbus-deps}"
 ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-org.greenrobot.eventbus}"
