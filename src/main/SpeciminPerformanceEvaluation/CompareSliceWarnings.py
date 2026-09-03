@@ -69,7 +69,7 @@ def _path(env_name: str, default: str) -> pathlib.Path:
     return pathlib.Path(os.environ.get(env_name, default)).expanduser()
 
 
-SPECIMIN_OUT = _path("SPECIMIN_OUT", "~/EventBus/specimin-out")
+SPECIMIN_OUT = _path("SPECIMIN_OUT", "~/Documents/EventBus/speciminout")
 
 # The exact warning a slice was produced for. RunSpeciminAll.py writes
 # "warning.txt"; "warnings.txt" is accepted too in case a folder was
