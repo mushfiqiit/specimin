@@ -268,8 +268,19 @@ public class Slicer {
         }
       }
 
+      // An unsolved type argument can make a parameterized type, and any member access through a
+      // receiver of that type, fail to resolve even though the declaration each names is known.
+      // Fall back to the erasure to ensure that declaration is in the slice; the type arguments
+      // are handled later.
+      Object erasure = resolved == null ? Resolver.resolveThroughErasure(asResolvable) : null;
+
       if (resolved != null) {
         generateUnsolvedSymbol = handleResolvedObject(node, resolved);
+      } else if (erasure != null) {
+        // Deliberately leaves generateUnsolvedSymbol set: this only adds the declaration, and
+        // generation for a type whose erasure is already known is a no-op, because
+        // UnsolvedSymbolGenerator#handleClassOrInterfaceType returns early on such a type.
+        handleResolvedObject(node, erasure);
       } else if (node instanceof MethodReferenceExpr methodRef) {
         // Deliberately leaves generateUnsolvedSymbol set: preserving candidates and generating
         // are not alternatives here. Generation still has to run to synthesize the reference's
