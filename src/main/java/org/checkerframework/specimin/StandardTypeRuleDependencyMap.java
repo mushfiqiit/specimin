@@ -526,43 +526,43 @@ public class StandardTypeRuleDependencyMap implements TypeRuleDependencyMap {
           && JavaParserUtil.isInConstantContext(node)) {
         elements.add(variableDeclarator.getInitializer().get());
       }
-    }
 
-    // If this static final field has no declaration-site initializer, it must be assigned
-    // somewhere else -- most commonly a static initializer block. Follow that assignment as a
-    // dependency, the same way any other reachable code is followed, instead of leaving it for
-    // Slicer's "empty final field" repair to invent a default value for. That repair still
-    // exists as a fallback for a field this loop can't find an assignment for.
-    if (variableDeclarator.getInitializer().isEmpty() && field.isStatic()) {
-      for (BodyDeclaration<?> member : type.getMembers()) {
-        if (!(member instanceof InitializerDeclaration initializer) || !initializer.isStatic()) {
-          continue;
-        }
+      // If this static final field has no declaration-site initializer, it must be assigned
+      // somewhere else -- most commonly a static initializer block. Follow that assignment as a
+      // dependency, the same way any other reachable code is followed, instead of leaving it for
+      // Slicer's "empty final field" repair to invent a default value for. That repair still
+      // exists as a fallback for a field this loop can't find an assignment for.
+      if (variableDeclarator.getInitializer().isEmpty() && field.isStatic()) {
+        for (BodyDeclaration<?> member : type.getMembers()) {
+          if (!(member instanceof InitializerDeclaration initializer) || !initializer.isStatic()) {
+            continue;
+          }
 
-        boolean assignsThisField =
-            initializer.getBody().findAll(AssignExpr.class).stream()
-                .anyMatch(
-                    assignExpr -> {
-                      ResolvedValueDeclaration target = null;
-                      if (assignExpr.getTarget().isFieldAccessExpr()) {
-                        target = Resolver.resolve(assignExpr.getTarget().asFieldAccessExpr());
-                      } else if (assignExpr.getTarget().isNameExpr()) {
-                        target = Resolver.resolve(assignExpr.getTarget().asNameExpr());
-                      }
+          boolean assignsThisField =
+              initializer.getBody().findAll(AssignExpr.class).stream()
+                  .anyMatch(
+                      assignExpr -> {
+                        ResolvedValueDeclaration target = null;
+                        if (assignExpr.getTarget().isFieldAccessExpr()) {
+                          target = Resolver.resolve(assignExpr.getTarget().asFieldAccessExpr());
+                        } else if (assignExpr.getTarget().isNameExpr()) {
+                          target = Resolver.resolve(assignExpr.getTarget().asNameExpr());
+                        }
 
-                      return target != null
-                          && target.isField()
-                          && target
-                              .asField()
-                              .declaringType()
-                              .getQualifiedName()
-                              .equals(resolvedFieldDeclaration.declaringType().getQualifiedName())
-                          && target.getName().equals(resolvedFieldDeclaration.getName());
-                    });
+                        return target != null
+                            && target.isField()
+                            && target
+                                .asField()
+                                .declaringType()
+                                .getQualifiedName()
+                                .equals(resolvedFieldDeclaration.declaringType().getQualifiedName())
+                            && target.getName().equals(resolvedFieldDeclaration.getName());
+                      });
 
-        if (assignsThisField) {
-          elements.add(initializer);
-          break;
+          if (assignsThisField) {
+            elements.add(initializer);
+            break;
+          }
         }
       }
     }
