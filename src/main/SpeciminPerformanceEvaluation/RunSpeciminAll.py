@@ -79,7 +79,7 @@ SPECIMIN_DIR = _path(
 )
 SPECIMIN_OUT = _path(
     "SPECIMIN_OUT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/speciminout",
+    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/speciminout2",
 )
 # EventBus's core module has no external compile-time dependencies, so an
 # empty directory is fine here -- it still needs to exist.
