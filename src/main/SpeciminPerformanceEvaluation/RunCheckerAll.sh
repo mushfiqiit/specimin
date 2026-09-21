@@ -19,7 +19,17 @@
 # Run this AFTER RunSpeciminAll.py, on the same SPECIMIN_OUT.
 #
 # Requirements:
-#   - Java 17+ active: export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+#   - Java 21+ active: export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+#     (not just 17+: ERRORPRONE_VERSION's default, 2.50.0, matches gson's own
+#     pinned version, and its class files require a JDK 21+ runtime to even
+#     load -- "UnsupportedClassVersionError: ... class file version 65.0,
+#     this version of the Java Runtime only recognizes class file versions up
+#     to 61.0" is exactly a JDK 17 JVM (61.0) trying to load Error Prone
+#     classes compiled for JDK 21 (65.0). This is unrelated to gson's own
+#     disable-error-prone Maven profile below JDK 21 (see
+#     GenerateNullAwayWarnings.sh) -- that's a Maven-specific pom.xml
+#     activation, whereas this is the error_prone_core jar itself refusing to
+#     load on too old a JVM, regardless of build tool.)
 #
 # Everything is configurable via environment variables; the defaults match
 # the rest of this pipeline and gson's own -Pnullaway profile.
@@ -62,6 +72,22 @@ done
 if [[ ! -f "$SPECIMIN_DIR/gradlew" || ! -d "$SPECIMIN_DIR/gradle" ]]; then
     echo "ERROR: Gradle wrapper not found under $SPECIMIN_DIR (need gradlew + gradle/)." >&2
     exit 1
+fi
+
+# error_prone_core's own class files require a JDK 21+ runtime to load at
+# all (independent of ERRORPRONE_VERSION/NULLAWAY_VERSION overrides that
+# might lower this requirement) -- catch a too-old active JDK here instead
+# of letting every slice fail with a raw UnsupportedClassVersionError
+# compiler crash.
+java_major="$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+)\..*/\1/; s/.*"([0-9]+)"/\1/')"
+if [[ "$java_major" =~ ^[0-9]+$ ]] && [[ "$java_major" -lt 21 ]]; then
+    echo "WARNING: active Java is $java_major, but ERRORPRONE_VERSION=$ERRORPRONE_VERSION's" >&2
+    echo "         class files require a JDK 21+ runtime to load. Every slice below will" >&2
+    echo "         fail with 'UnsupportedClassVersionError: ... class file version 65.0'" >&2
+    echo "         once compileJava tries to load the Error Prone javac plugin." >&2
+    echo "         Switch to Java 21-25 first, e.g.:" >&2
+    echo "           export JAVA_HOME=\$(/usr/libexec/java_home -v 21)" >&2
+    echo "$DIVIDER" >&2
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
