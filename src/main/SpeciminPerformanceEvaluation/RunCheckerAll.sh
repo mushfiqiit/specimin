@@ -76,18 +76,24 @@ fi
 
 # error_prone_core's own class files require a JDK 21+ runtime to load at
 # all (independent of ERRORPRONE_VERSION/NULLAWAY_VERSION overrides that
-# might lower this requirement) -- catch a too-old active JDK here instead
-# of letting every slice fail with a raw UnsupportedClassVersionError
-# compiler crash.
+# might lower this requirement). There is no partial-success case here --
+# every slice will fail identically -- so this is a hard failure, not a
+# warning: a warning is too easy to miss (or to see and run anyway) in a
+# script that's about to loop over dozens of slice folders, each printing
+# several screens of Gradle/compiler output, and JAVA_HOME does not persist
+# across shells, so this is exactly the kind of thing that's easy to forget
+# to redo in a fresh terminal after it was already set correctly once.
 java_major="$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+)\..*/\1/; s/.*"([0-9]+)"/\1/')"
 if [[ "$java_major" =~ ^[0-9]+$ ]] && [[ "$java_major" -lt 21 ]]; then
-    echo "WARNING: active Java is $java_major, but ERRORPRONE_VERSION=$ERRORPRONE_VERSION's" >&2
-    echo "         class files require a JDK 21+ runtime to load. Every slice below will" >&2
-    echo "         fail with 'UnsupportedClassVersionError: ... class file version 65.0'" >&2
-    echo "         once compileJava tries to load the Error Prone javac plugin." >&2
-    echo "         Switch to Java 21-25 first, e.g.:" >&2
-    echo "           export JAVA_HOME=\$(/usr/libexec/java_home -v 21)" >&2
-    echo "$DIVIDER" >&2
+    echo "ERROR: active Java is $java_major, but ERRORPRONE_VERSION=$ERRORPRONE_VERSION's" >&2
+    echo "       class files require a JDK 21+ runtime to load. Every slice would fail with" >&2
+    echo "       'UnsupportedClassVersionError: ... class file version 65.0' once" >&2
+    echo "       compileJava tries to load the Error Prone javac plugin -- refusing to run." >&2
+    echo "       Switch to Java 21-25 first, e.g.:" >&2
+    echo "         export JAVA_HOME=\$(/usr/libexec/java_home -v 21)" >&2
+    echo "       (JAVA_HOME does not persist across shells -- if this worked in a previous" >&2
+    echo "       terminal session, it needs to be set again in this one.)" >&2
+    exit 1
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
