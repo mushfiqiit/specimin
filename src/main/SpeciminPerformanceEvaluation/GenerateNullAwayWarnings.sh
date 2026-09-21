@@ -21,8 +21,20 @@
 # Requirements:
 #   - PROJECT=eventbus: Java 11+ (Java 17 recommended) and network access the
 #     first time (Gradle + the Error Prone / NullAway artifacts are downloaded).
-#   - PROJECT=gson: Java 17+ (Gson's build requires it), Maven on PATH, and the
-#     `nullaway` Maven profile set up in gson/pom.xml (one-time repo change).
+#   - PROJECT=gson: Java 21 through 25, Maven on PATH, and the `nullaway`
+#     Maven profile set up in gson/pom.xml (one-time repo change). Java 21+
+#     is NOT just "recommended" here: gson's own pom.xml has a
+#     `disable-error-prone` profile that auto-activates for any JDK below 21
+#     and, via `combine.self="override"`, wholesale replaces the
+#     maven-compiler-plugin's compilerArgs and annotationProcessorPaths --
+#     wiping out Error Prone (and therefore NullAway) entirely, even with
+#     `-Pnullaway` passed. On a JDK in [17,21), gson's own enforcer plugin
+#     still lets the build succeed, but the compile silently becomes a plain
+#     `javac` pass with zero checks run, so nullaway-warnings.txt comes back
+#     empty -- a false "no warnings", not a clean-code signal. Gson's
+#     enforcer plugin caps the other end at Java < 26 (see the
+#     RequireJavaVersion rule in pom.xml), so Java 21-25 is the only window
+#     where this actually works.
 #
 # ── Gson repo setup (one-time, in the gson checkout) ─────────────────────────
 # Gson's root pom.xml already runs Error Prone on every build (see the
@@ -112,6 +124,25 @@ if [[ "$PROJECT" == "gson" ]]; then
     echo "  Java        : $(java -version 2>&1 | head -1)"
     echo "$DIVIDER"
 
+    # gson/pom.xml's own `disable-error-prone` profile auto-activates for any
+    # JDK below 21 and wholesale overrides (combine.self="override") the
+    # maven-compiler-plugin's compilerArgs/annotationProcessorPaths -- which
+    # strips Error Prone (and NullAway with it) entirely, even with
+    # -Pnullaway passed. The build still succeeds (a plain javac compile),
+    # so nullaway-warnings.txt silently comes back empty instead of erroring.
+    # Warn about this up front instead of letting it look like a clean run.
+    java_major="$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+)\..*/\1/; s/.*"([0-9]+)"/\1/')"
+    if [[ "$java_major" =~ ^[0-9]+$ ]] && [[ "$java_major" -lt 21 ]]; then
+        echo "WARNING: active Java is $java_major, but gson's own pom.xml disables Error" >&2
+        echo "         Prone (and therefore NullAway) below Java 21 via its" >&2
+        echo "         'disable-error-prone' profile. The build below will likely succeed" >&2
+        echo "         but run zero checks, making nullaway-warnings.txt empty regardless" >&2
+        echo "         of what's actually in gson's sources." >&2
+        echo "         Switch to Java 21-25 first, e.g.:" >&2
+        echo "           export JAVA_HOME=\$(/usr/libexec/java_home -v 21)" >&2
+        echo "$DIVIDER" >&2
+    fi
+
     # ── Run ───────────────────────────────────────────────────────────────────
     # `clean` avoids Maven's incremental compiler skipping already-up-to-date
     # sources, which would otherwise silently produce zero NullAway warnings.
@@ -140,8 +171,10 @@ if [[ "$PROJECT" == "gson" ]]; then
     if [[ "$warn_count" -eq 0 ]]; then
         echo ""
         echo "  No [NullAway] lines found. Check $REPORT_FILE — the most common causes"
-        echo "  are the 'nullaway' Maven profile not being set up in gson/pom.xml yet,"
-        echo "  a Java version below 17, or a missing network connection for the first"
+        echo "  are: a Java version below 21 (gson's own 'disable-error-prone' profile"
+        echo "  silently strips Error Prone/NullAway below Java 21 -- see the warning"
+        echo "  above if one was printed), the 'nullaway' Maven profile not being set up"
+        echo "  in gson/pom.xml yet, or a missing network connection for the first"
         echo "  download of the NullAway artifact."
     fi
     exit 0
