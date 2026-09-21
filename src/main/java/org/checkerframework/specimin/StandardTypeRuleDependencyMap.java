@@ -14,6 +14,8 @@ import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.LambdaExpr;
+import com.github.javaparser.ast.expr.MethodReferenceExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
 import com.github.javaparser.ast.nodeTypes.NodeWithExtends;
@@ -28,6 +30,7 @@ import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.resolution.MethodUsage;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedEnumConstantDeclaration;
@@ -40,12 +43,14 @@ import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.DefaultConstructorDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserRecordDeclaration;
+import com.github.javaparser.symbolsolver.logic.FunctionalInterfaceLogic;
 import com.github.javaparser.utils.Pair;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** The standard type rule dependency map */
@@ -104,6 +109,41 @@ public class StandardTypeRuleDependencyMap implements TypeRuleDependencyMap {
   @Override
   public List<Node> getRelevantElements(Node node) {
     List<Node> elements = new ArrayList<>();
+
+    // A lambda or method reference implicitly depends on the single abstract method of
+    // whatever functional interface it targets, even though it never names that method
+    // explicitly: there is no MethodCallExpr or MethodReferenceExpr in the slice that
+    // resolves to it, since the connection only exists at the type-checking level (the
+    // compiler infers that the lambda/method reference implements that one method). Without
+    // this, the method is never added to the worklist, and gets pruned away by
+    // Slicer#removeNonSliceNodes, leaving an empty interface that the lambda/method reference
+    // can no longer target -- "X is not a functional interface / no abstract method found in
+    // interface X". Preserving the same abstract method here, the same way any other resolved
+    // method-like declaration's own node is preserved elsewhere in this class, keeps the
+    // slice's lambdas and method references compilable.
+    if (node instanceof LambdaExpr || node instanceof MethodReferenceExpr) {
+      ResolvedType targetType = Resolver.calculateResolvedType((Expression) node);
+      if (targetType != null) {
+        // A lambda/method reference's own resolved type is sometimes reported as a
+        // ResolvedLambdaConstraintType wrapping the real target type as its "bound",
+        // rather than that real type directly (see the similar unwrapping in
+        // JavaParserUtil#findCorrespondingDeclarationForConstraintQualifiedExpression).
+        if (targetType.isConstraint()) {
+          targetType = targetType.asConstraintType().getBound();
+        }
+
+        Optional<MethodUsage> functionalMethod =
+            FunctionalInterfaceLogic.getFunctionalMethod(targetType);
+        if (functionalMethod.isPresent()) {
+          Node attached =
+              JavaParserUtil.tryFindAttachedNode(
+                  functionalMethod.get().getDeclaration(), fqnToCompilationUnits);
+          if (attached != null) {
+            elements.add(attached);
+          }
+        }
+      }
+    }
 
     if (node instanceof NodeWithAnnotations<?> withAnnotations) {
       for (AnnotationExpr annotation : withAnnotations.getAnnotations()) {
