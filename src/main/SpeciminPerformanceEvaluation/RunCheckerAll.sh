@@ -127,6 +127,11 @@ tasks.withType(JavaCompile).configureEach {
     // you and must be set explicitly -- gson's own pom.xml sets the Maven
     // equivalent of both for the same reason.
     options.compilerArgs << '-XDcompilePolicy=simple' << '--should-stop=ifError=FLOW'
+    // Also required by Error Prone specifically on JDK 21 -- without it,
+    // compilation fails immediately with "-XDaddTypeAnnotationsToSymbol=true
+    // is required by Error Prone on JDK 21", the same way the two flags
+    // above are required on JDK 16+. gson's own pom.xml sets this too.
+    options.compilerArgs << '-XDaddTypeAnnotationsToSymbol=true'
     options.compilerArgs << '-Xmaxwarns' << '10000'
 }
 EOF
