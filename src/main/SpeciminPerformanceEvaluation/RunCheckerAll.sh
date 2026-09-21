@@ -116,6 +116,17 @@ tasks.withType(JavaCompile).configureEach {
         option('NullAway:AnnotatedPackages', '${ANNOTATED_PACKAGES}')
         option('NullAway:JSpecifyMode', 'false')
     }
+    // Required for Error Prone to run at all (see
+    // https://errorprone.info/docs/installation#gradle): javac's default
+    // --should-stop=ifError policy (INIT) stops compilation before the FLOW
+    // phase Error Prone hooks into, so it refuses to run under it --
+    // "The default --should-stop=ifError policy (INIT) is not supported by
+    // Error Prone, pass --should-stop=ifError=FLOW instead". Unlike the
+    // --add-exports/--add-opens JVM flags (which net.ltgt.gradle.errorprone
+    // adds automatically on JDK 16+), these compilerArgs are not added for
+    // you and must be set explicitly -- gson's own pom.xml sets the Maven
+    // equivalent of both for the same reason.
+    options.compilerArgs << '-XDcompilePolicy=simple' << '--should-stop=ifError=FLOW'
     options.compilerArgs << '-Xmaxwarns' << '10000'
 }
 EOF
