@@ -296,13 +296,24 @@ def innermost(spans, target_idx):
 
 
 # ── Location parsing ───────────────────────────────────────────────────────────
-# Matches the javac diagnostic location line NullAway emits, e.g.:
-#   /path/File.java:42: warning: [NullAway] dereferenced expression ... is @Nullable
-# Continuation lines (source snippet, '^' caret, 'see ...') don't start with
-# '<path>:<line>:' and are naturally skipped -- run-nullaway.sh's `grep -E
+# Matches the NullAway diagnostic location line in either shape it can come
+# in, depending on how the compiler that produced nullaway-warnings.txt was
+# invoked:
+#   - classic javac/Gradle (forked or command-line) diagnostics:
+#       /path/File.java:42: warning: [NullAway] dereferenced expression ... is @Nullable
+#   - Maven's own non-forked maven-compiler-plugin diagnostic formatter
+#     (used by GenerateNullAwayWarnings.sh's PROJECT=gson path, which never
+#     forks the compiler -- Error Prone requires running in Maven's own JVM,
+#     the one .mvn/jvm.config's --add-exports/--add-opens flags apply to):
+#       [WARNING] /path/File.java:[42,7] [NullAway] dereferenced expression ... is @Nullable
+# Continuation lines (source snippet, '^' caret, 'see ...') don't match
+# either shape and are naturally skipped -- the pipeline's `grep -E
 # '\[NullAway\]'` already reduces each warning to exactly this one line, so
 # each matched line here IS the complete, exact warning message.
-_LOCATION_RE = re.compile(r'^(.+?):(\d+):\s*(?:error|warning):\s*\[[^\]]+\]')
+_LOCATION_RE = re.compile(
+    r'^(?:\[(?:WARNING|ERROR)\]\s+)?'
+    r'(.+?):(?:(\d+):\s*(?:error|warning):|\[(\d+),\d+\])\s*\[[^\]]+\]'
+)
 
 
 def parse_locations(txt_file: pathlib.Path) -> list:
@@ -317,7 +328,7 @@ def parse_locations(txt_file: pathlib.Path) -> list:
         if not m:
             continue
         fp = pathlib.Path(m.group(1))
-        ln = int(m.group(2))
+        ln = int(m.group(2) or m.group(3))
         entries.append((fp, ln, line))
     return entries
 

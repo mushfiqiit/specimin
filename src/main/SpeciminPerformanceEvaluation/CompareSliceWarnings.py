@@ -79,10 +79,18 @@ SLICE_WARNINGS_NAME = "nullaway-warnings.txt"
 RESULT_NAME = "reproduction-check.txt"
 SUMMARY_NAME = "summary.txt"
 
-# Same diagnostic-location shape ExtractWarningMethods.py/RunCheckerAll.sh
-# use: "<file>:<line>: warning: [NullAway] <message>". Captures the message
+# Same diagnostic-location shapes ExtractWarningMethods.py/RunCheckerAll.sh
+# accept: classic javac/Gradle "<file>:<line>: warning: [NullAway] <message>"
+# (what RunCheckerAll.sh's Gradle-based slice check produces), or Maven's own
+# non-forked "[WARNING] <file>:[<line>,<col>] [NullAway] <message>" (what
+# GenerateNullAwayWarnings.sh's PROJECT=gson path produces, since Error Prone
+# requires the compiler to run in-process rather than forked -- see
+# ExtractWarningMethods.py's _LOCATION_RE for why). Captures the message
 # separately so it can be compared independent of file/line.
-_LOCATION_RE = re.compile(r'^(.+?):(\d+):\s*(?:error|warning):\s*\[([^\]]+)\]\s*(.*)$')
+_LOCATION_RE = re.compile(
+    r'^(?:\[(?:WARNING|ERROR)\]\s+)?'
+    r'(.+?):(?:(\d+):\s*(?:error|warning):|\[(\d+),\d+\])\s*\[([^\]]+)\]\s*(.*)$'
+)
 
 # Some NullAway message templates embed a referenced declaration's own line
 # number in the message text, e.g. "...@NonNull field methodString (line 28)
@@ -155,7 +163,8 @@ def parse_findings(text: str) -> list:
         m = _LOCATION_RE.match(raw)
         if not m:
             continue
-        file, line, tag, message = m.groups()
+        file, classic_line, maven_line, tag, message = m.groups()
+        line = classic_line or maven_line
         findings.append(Finding(raw, file, int(line), tag, message))
     return findings
 
