@@ -6,9 +6,9 @@ Reads warning-location lines from nullaway-warnings.txt, finds the enclosing
 method or constructor for each warning, and writes ONE entry per warning to
 warningMethods.jsonl (in the same order as the input file):
 
-    {"target": "org.greenrobot.eventbus.EventBus#post(Object)",
-     "warning": "/path/EventBus.java:204: warning: [NullAway] ...",
-     "file": "/path/EventBus.java", "line": 204}
+    {"target": "com.google.gson.Gson#fromJson(String, Class)",
+     "warning": "/path/Gson.java:204: warning: [NullAway] ...",
+     "file": "/path/Gson.java", "line": 204}
 
 Unlike LLMInferencePython/ExtractWarningMethods.py, this script does NOT
 deduplicate by target method: if two warnings are reported inside the same
@@ -47,7 +47,7 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/nullaway-warnings.txt",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",

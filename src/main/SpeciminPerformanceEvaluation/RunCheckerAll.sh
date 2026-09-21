@@ -6,31 +6,31 @@
 # into the slice, pointing its source set at the slice itself, and runs
 # `./gradlew clean compileJava` with NullAway enabled via Error Prone.
 # Writes nullaway-report.txt (full build log) and nullaway-warnings.txt
-# (just the NullAway findings, same shape as EventBus's own
-# nullaway-warnings.txt) inside the slice folder -- warnings specific to
-# THAT slice. The Gradle wrapper is copied from SPECIMIN_DIR.
+# (just the NullAway findings, same shape as gson's own
+# nullaway-warnings.txt, see GenerateNullAwayWarnings.sh) inside the slice
+# folder -- warnings specific to THAT slice. The Gradle wrapper is copied
+# from SPECIMIN_DIR.
 #
 # Unlike LLMInferencePython/RunCheckerAll.sh, this script runs ONLY
-# NullAway (no Index Checker / CF_HOME dependency), and defaults to
-# EventBus's real annotated package and NullAway/Error Prone versions
-# (see EventBus/gradle/nullaway.gradle) instead of gson's.
+# NullAway (no Index Checker / CF_HOME dependency), and defaults to gson's
+# real annotated package and a NullAway/Error Prone version pair known to
+# work together (see GenerateNullAwayWarnings.sh's PROJECT=gson path).
 #
-# Run this AFTER RunSpeciminAll.py and FixSpeciminNullInits.py, on the same
-# SPECIMIN_OUT.
+# Run this AFTER RunSpeciminAll.py, on the same SPECIMIN_OUT.
 #
 # Requirements:
 #   - Java 17+ active: export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 #
 # Everything is configurable via environment variables; the defaults match
-# the rest of this pipeline and EventBus's own gradle/nullaway.gradle.
+# the rest of this pipeline and gson's own -Pnullaway profile.
 #
-#   SPECIMIN_OUT        slice folders to check           (default: ~/EventBus/specimin-out)
-#   SPECIMIN_DIR         Specimin checkout (has gradlew)   (default: ~/specimin)
-#   JAR_PATH             compile-time dependency jars      (default: ~/eventbus-deps)
-#   ANNOTATED_PACKAGES   NullAway:AnnotatedPackages        (default: org.greenrobot.eventbus)
+#   SPECIMIN_OUT        slice folders to check            (default: ~/Documents/gson/speciminout)
+#   SPECIMIN_DIR         Specimin checkout (has gradlew)   (default: ~/Documents/specimin)
+#   JAR_PATH             compile-time dependency jars      (default: ~/gson-deps)
+#   ANNOTATED_PACKAGES   NullAway:AnnotatedPackages        (default: com.google.gson)
 #   NULLAWAY_SEVERITY    WARN or ERROR                     (default: WARN)
-#   ERRORPRONE_VERSION   Error Prone core version          (default: 2.18.0)
-#   NULLAWAY_VERSION     NullAway version                  (default: 0.10.10)
+#   ERRORPRONE_VERSION   Error Prone core version          (default: 2.50.0)
+#   NULLAWAY_VERSION     NullAway version                  (default: 0.13.7)
 #   GRADLE_DIST_VERSION  Gradle distribution to force       (default: 8.7)
 #
 # Usage:
@@ -39,13 +39,13 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/EventBus/specimin-out}"
+SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/gson/speciminout}"
 SPECIMIN_DIR="${SPECIMIN_DIR:-$HOME/Documents/specimin}"
-JAR_PATH="${JAR_PATH:-$HOME/eventbus-deps}"
-ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-org.greenrobot.eventbus}"
+JAR_PATH="${JAR_PATH:-$HOME/gson-deps}"
+ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-com.google.gson}"
 NULLAWAY_SEVERITY="${NULLAWAY_SEVERITY:-WARN}"
-ERRORPRONE_VERSION="${ERRORPRONE_VERSION:-2.18.0}"
-NULLAWAY_VERSION="${NULLAWAY_VERSION:-0.10.10}"
+ERRORPRONE_VERSION="${ERRORPRONE_VERSION:-2.50.0}"
+NULLAWAY_VERSION="${NULLAWAY_VERSION:-0.13.7}"
 GRADLE_DIST_VERSION="${GRADLE_DIST_VERSION:-8.7}"
 
 GRADLE_WRAPPER_SRC="$SPECIMIN_DIR"   # contains gradlew, gradlew.bat, gradle/
@@ -74,14 +74,13 @@ rootProject.name = 'specimin-checker-check'
 EOF
 
     # build.gradle -- NullAway via Error Prone, source set is the slice
-    # itself. JSpecifyMode=false: EventBus has no @NullMarked/@NullUnmarked
-    # annotations anywhere, so NullAway's JSpecify mode would otherwise only
-    # emit a "please annotate" advisory instead of actually analyzing the
-    # slice. (No RequireExplicitNullMarking check() here: that's a NullAway
-    # check introduced after 0.10.10, the version EventBus's own
-    # gradle/nullaway.gradle pins -- configuring it against 0.10.10 fails
-    # the build with "RequireExplicitNullMarking is not a valid checker
-    # name" since it isn't registered at that version.)
+    # itself. JSpecifyMode=false + RequireExplicitNullMarking OFF: gson has
+    # no @NullMarked/@NullUnmarked annotations anywhere, so NullAway's
+    # JSpecify mode (default since ~0.11, and NULLAWAY_VERSION here is newer
+    # than that) would otherwise only emit a "please annotate"
+    # RequireExplicitNullMarking advisory instead of actually analyzing the
+    # slice -- see GenerateNullAwayWarnings.sh's PROJECT=gson path, which
+    # applies the same two settings against gson's real sources.
     cat > "$dir/build.gradle" <<EOF
 plugins {
     id 'java'
@@ -105,7 +104,7 @@ sourceSets {
     main {
         java {
             srcDirs = ['.']
-            include 'org/**/*.java'
+            include '**/*.java'
         }
     }
 }
@@ -113,6 +112,7 @@ sourceSets {
 tasks.withType(JavaCompile).configureEach {
     options.errorprone {
         check('NullAway', net.ltgt.gradle.errorprone.CheckSeverity.${NULLAWAY_SEVERITY})
+        check('RequireExplicitNullMarking', net.ltgt.gradle.errorprone.CheckSeverity.OFF)
         option('NullAway:AnnotatedPackages', '${ANNOTATED_PACKAGES}')
         option('NullAway:JSpecifyMode', 'false')
     }

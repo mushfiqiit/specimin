@@ -55,7 +55,7 @@ Usage:
     python3 CompareSliceWarnings.py
 
 Paths can be overridden via environment variables:
-    SPECIMIN_OUT   slice folders to check (default: ~/EventBus/specimin-out)
+    SPECIMIN_OUT   slice folders to check (default: ~/Documents/gson/speciminout)
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def _path(env_name: str, default: str) -> pathlib.Path:
     return pathlib.Path(os.environ.get(env_name, default)).expanduser()
 
 
-SPECIMIN_OUT = _path("SPECIMIN_OUT", "~/Documents/EventBus/speciminout")
+SPECIMIN_OUT = _path("SPECIMIN_OUT", "~/Documents/gson/speciminout")
 
 # The exact warning a slice was produced for. RunSpeciminAll.py writes
 # "warning.txt"; "warnings.txt" is accepted too in case a folder was

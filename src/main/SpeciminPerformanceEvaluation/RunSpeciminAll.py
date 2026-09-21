@@ -14,11 +14,11 @@ Each entry carries a "kind" of either "method" (sliced with Specimin's
 --targetField) -- see ExtractWarningMethods.py.
 
 The --root passed to Specimin is derived PER TARGET from the warning's own
-absolute file path (see derive_root), not one global EVENTBUS_SRC_ROOT: a
-warning from a different module with its own "src" tree (e.g. EventBus's
-core module vs. EventBusAnnotationProcessor) resolves against its own
-module root instead of failing with "Specimin could not find the file for
-the target class". EVENTBUS_SRC_ROOT is kept only as a fallback for the
+absolute file path (see derive_root), not one global GSON_SRC_ROOT: a
+warning from a different module with its own "src" tree (e.g. gson's core
+"gson" module vs. its "extras"/"proto"/"metrics" modules) resolves against
+its own module root instead of failing with "Specimin could not find the
+file for the target class". GSON_SRC_ROOT is kept only as a fallback for the
 rare case derive_root can't compute a root.
 
 This mirrors LLMInferencePython/RunSpeciminAll.py's Specimin-invocation logic,
@@ -29,12 +29,12 @@ with these differences:
   2. Each slice folder gets a warning.txt holding the exact warning line the
      slice was generated for (LLMInferencePython's version does not keep this).
   3. --root is derived per target instead of being one fixed source root, so
-     warnings from other modules (e.g. EventBusAnnotationProcessor) resolve.
+     warnings from other modules (e.g. gson's "extras" module) resolve.
 
 Each line of warningMethods.jsonl looks like:
-    {"target": "org.greenrobot.eventbus.EventBus#post(Object)", "kind": "method",
-     "warning": "/path/EventBus.java:204: warning: [NullAway] ...",
-     "file": "/path/EventBus.java", "line": 204}
+    {"target": "com.google.gson.Gson#fromJson(String, Class)", "kind": "method",
+     "warning": "/path/Gson.java:204: warning: [NullAway] ...",
+     "file": "/path/Gson.java", "line": 204}
 
 Usage:
     python3 RunSpeciminAll.py            # run all
@@ -59,19 +59,19 @@ def _path(env_name: str, default: str) -> pathlib.Path:
 
 NULLAWAY_WARNINGS_FILE = _path(
     "NULLAWAY_WARNINGS_FILE",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/nullaway-warnings.txt",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/nullaway-warnings.txt",
 )
 WARNING_METHODS_FILE = _path(
     "WARNING_METHODS_FILE",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/warningMethods.jsonl"
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/warningMethods.jsonl"
 )
 # Default Java source root, used only as a fallback when a target's root
 # can't be derived from its warning's absolute file path (see derive_root
-# below) -- e.g. EventBus's core module vs. EventBusAnnotationProcessor,
-# which are separate module trees with their own "src" directories.
-EVENTBUS_SRC_ROOT = _path(
-    "EVENTBUS_SRC_ROOT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus",
+# below) -- e.g. gson's core "gson" module vs. its "extras"/"proto"/"metrics"
+# modules, which are separate module trees with their own "src" directories.
+GSON_SRC_ROOT = _path(
+    "GSON_SRC_ROOT",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/gson/src/main/java",
 )
 SPECIMIN_DIR = _path(
     "SPECIMIN_DIR",
@@ -79,11 +79,13 @@ SPECIMIN_DIR = _path(
 )
 SPECIMIN_OUT = _path(
     "SPECIMIN_OUT",
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/speciminout",
+    "/Users/mushfiqurrahmanchowdhury/Documents/gson/speciminout",
 )
-# EventBus's core module has no external compile-time dependencies, so an
-# empty directory is fine here -- it still needs to exist.
-JAR_PATH = _path("JAR_PATH", "~/eventbus-deps")
+# gson's main "gson" module has one external compile-time dependency used in
+# its main sources -- com.google.errorprone:error_prone_annotations (see
+# gson/pom.xml) -- so JAR_PATH must contain that jar (and its transitive
+# deps, if any) for Specimin to resolve those annotation types.
+JAR_PATH = _path("JAR_PATH", "~/gson-deps")
 GRADLEW  = SPECIMIN_DIR / "gradlew"
 
 
@@ -99,9 +101,9 @@ def fqcn_to_rel_file(fqcn: str) -> pathlib.Path:
     class file.
 
     Example:
-        org.greenrobot.eventbus.EventBus            -> org/greenrobot/eventbus/EventBus.java
-        org.greenrobot.eventbus.SubscriberMethodFinder.FindState
-                                                     -> org/greenrobot/eventbus/SubscriberMethodFinder.java
+        com.google.gson.Gson                        -> com/google/gson/Gson.java
+        com.google.gson.internal.bind.ReflectiveTypeAdapterFactory.Adapter
+                                                     -> com/google/gson/internal/bind/ReflectiveTypeAdapterFactory.java
     """
     parts = fqcn.split('.')
     for i, part in enumerate(parts):
@@ -121,9 +123,9 @@ def derive_root(abs_file: pathlib.Path, rel_file: pathlib.Path):
     (e.g. the file couldn't be read when the warning was extracted).
 
     This lets each target use ITS OWN module's source root instead of one
-    global EVENTBUS_SRC_ROOT, so warnings from a different module (e.g.
-    EventBusAnnotationProcessor, which has its own separate "src" tree from
-    EventBus's core module) resolve correctly too.
+    global GSON_SRC_ROOT, so warnings from a different module (e.g. gson's
+    "extras" module, which has its own separate "src" tree from the main
+    "gson" module) resolve correctly too.
     """
     abs_parts, rel_parts = abs_file.parts, rel_file.parts
     if len(abs_parts) <= len(rel_parts) or abs_parts[-len(rel_parts):] != rel_parts:
@@ -135,10 +137,10 @@ def parse_warning_methods(jsonl_file: pathlib.Path) -> list:
     """
     Read warningMethods.jsonl. Each non-empty line is a JSON object with a
     fully-qualified Specimin target plus the exact warning it came from:
-        {"target": "org.greenrobot.eventbus.EventBus#subscribe(Object, SubscriberMethod)",
+        {"target": "com.google.gson.Gson#toJson(Object, Type, JsonWriter)",
          "kind": "method", "warning": "...", "file": "...", "line": 42}
     or, for a bare field declaration:
-        {"target": "org.greenrobot.eventbus.EventBus#defaultInstance",
+        {"target": "com.google.gson.Gson#instanceCreatorMap",
          "kind": "field", "warning": "...", "file": "...", "line": 46}
 
     Returns a list of (rel_file, target, kind, short_name, warning_text,
@@ -183,8 +185,8 @@ def write_warning_copy(output_dir: pathlib.Path, warning_text: str) -> None:
 def write_root_copy(output_dir: pathlib.Path, root: pathlib.Path) -> None:
     """
     Record the --root this slice was generated against, in root.txt. Slices
-    can come from different module source trees (e.g. EventBus's core module
-    vs. EventBusAnnotationProcessor), so downstream tools that need to find a
+    can come from different module source trees (e.g. gson's main "gson"
+    module vs. its "extras" module), so downstream tools that need to find a
     slice's ORIGINAL source file (FixSpeciminNullInits.py) can't assume one
     global source root either -- they read this instead.
     """
@@ -198,8 +200,8 @@ def run_specimin(rel_file, target, kind, short_name, warning_text, abs_file, ind
     root = derive_root(abs_file, rel_file)
     root_note = ""
     if root is None:
-        root = EVENTBUS_SRC_ROOT
-        root_note = "  (derive_root failed -- falling back to EVENTBUS_SRC_ROOT)"
+        root = GSON_SRC_ROOT
+        root_note = "  (derive_root failed -- falling back to GSON_SRC_ROOT)"
 
     specimin_args = [
         '--root',            str(root),
@@ -242,7 +244,7 @@ def main() -> None:
 
     required = [
         (WARNING_METHODS_FILE, "warningMethods.jsonl"),
-        (EVENTBUS_SRC_ROOT,    "project src root (EVENTBUS_SRC_ROOT)"),
+        (GSON_SRC_ROOT,        "project src root (GSON_SRC_ROOT)"),
     ]
     if not dry_run:
         required += [
