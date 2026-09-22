@@ -215,13 +215,18 @@ repositories {
 }
 
 dependencies {
-    // JUnit 4's only compile-time dependency (see junit4/pom.xml).
+    // JUnit 4's only compile-time dependency (see junit4/pom.xml). No
+    // nullness-annotation jars (nullaway-annotations/jsr305/jspecify) are on
+    // the compile classpath: JUnit's sources don't use them, and
+    // nullaway-annotations 0.13.x is published for Java 11+, which Gradle
+    // refuses to resolve against a classpath it targets at Java 8 (derived
+    // from options.release = 8 below) -- "No matching variant of
+    // com.uber.nullaway:nullaway-annotations ... compatible with Java 11 and
+    // the consumer needed a component, compatible with Java 8". This also
+    // keeps copyDeps from copying them into JAR_PATH.
     implementation       'org.hamcrest:hamcrest-core:1.3'
     errorprone           'com.google.errorprone:error_prone_core:${ERRORPRONE_VERSION}'
     annotationProcessor  'com.uber.nullaway:nullaway:${NULLAWAY_VERSION}'
-    compileOnly          'com.uber.nullaway:nullaway-annotations:${NULLAWAY_VERSION}'
-    compileOnly          'com.google.code.findbugs:jsr305:3.0.2'
-    compileOnly          'org.jspecify:jspecify:0.3.0'
 }
 
 sourceSets {
