@@ -51,9 +51,9 @@
 # specimin/build.gradle) -- the one concretely-known-working CF setup
 # available in this repository, and the safest starting point for a new one.
 #
-#   SPECIMIN_OUT                slice folders to check           (default: ~/Documents/gson/speciminout)
+#   SPECIMIN_OUT                slice folders to check           (default: ~/Documents/junit4/speciminout)
 #   SPECIMIN_DIR                 Specimin checkout (has gradlew)   (default: ~/Documents/specimin)
-#   JAR_PATH                     compile-time dependency jars      (default: ~/gson-deps)
+#   JAR_PATH                     compile-time dependency jars      (default: ~/junit-deps)
 #   CF_CHECKER                   fully-qualified checker class     (default: org.checkerframework.checker.nullness.NullnessChecker)
 #   CF_SEVERITY                  WARN or ERROR                     (default: WARN)
 #   CF_VERSION                   Checker Framework version         (default: 4.2.0)
@@ -67,9 +67,9 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/gson/speciminout}"
+SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/junit4/speciminout}"
 SPECIMIN_DIR="${SPECIMIN_DIR:-$HOME/Documents/specimin}"
-JAR_PATH="${JAR_PATH:-$HOME/gson-deps}"
+JAR_PATH="${JAR_PATH:-$HOME/junit-deps}"
 CF_CHECKER="${CF_CHECKER:-org.checkerframework.checker.nullness.NullnessChecker}"
 CF_SEVERITY="${CF_SEVERITY:-WARN}"
 CF_VERSION="${CF_VERSION:-4.2.0}"

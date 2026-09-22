@@ -6,15 +6,16 @@
 # into the slice, pointing its source set at the slice itself, and runs
 # `./gradlew clean compileJava` with NullAway enabled via Error Prone.
 # Writes nullaway-report.txt (full build log) and nullaway-warnings.txt
-# (just the NullAway findings, same shape as gson's own
+# (just the NullAway findings, same shape as JUnit's own
 # nullaway-warnings.txt, see GenerateNullAwayWarnings.sh) inside the slice
 # folder -- warnings specific to THAT slice. The Gradle wrapper is copied
 # from SPECIMIN_DIR.
 #
 # Unlike LLMInferencePython/RunCheckerAll.sh, this script runs ONLY
-# NullAway (no Index Checker / CF_HOME dependency), and defaults to gson's
-# real annotated package and a NullAway/Error Prone version pair known to
-# work together (see GenerateNullAwayWarnings.sh's PROJECT=gson path).
+# NullAway (no Index Checker / CF_HOME dependency), and defaults to JUnit
+# 4's real annotated packages and the same NullAway/Error Prone version pair
+# GenerateNullAwayWarnings.sh's PROJECT=junit path runs on JUnit's original
+# sources.
 #
 # Run this AFTER RunSpeciminAll.py, on the same SPECIMIN_OUT.
 #
@@ -32,12 +33,14 @@
 #     load on too old a JVM, regardless of build tool.)
 #
 # Everything is configurable via environment variables; the defaults match
-# the rest of this pipeline and gson's own -Pnullaway profile.
+# the rest of this pipeline and GenerateNullAwayWarnings.sh's PROJECT=junit
+# path. JAR_PATH is populated by that script (it copies hamcrest-core,
+# JUnit's only compile-time dependency, there).
 #
-#   SPECIMIN_OUT        slice folders to check            (default: ~/Documents/gson/speciminout)
+#   SPECIMIN_OUT        slice folders to check            (default: ~/Documents/junit4/speciminout)
 #   SPECIMIN_DIR         Specimin checkout (has gradlew)   (default: ~/Documents/specimin)
-#   JAR_PATH             compile-time dependency jars      (default: ~/gson-deps)
-#   ANNOTATED_PACKAGES   NullAway:AnnotatedPackages        (default: com.google.gson)
+#   JAR_PATH             compile-time dependency jars      (default: ~/junit-deps)
+#   ANNOTATED_PACKAGES   NullAway:AnnotatedPackages        (default: org.junit,junit)
 #   NULLAWAY_SEVERITY    WARN or ERROR                     (default: WARN)
 #   ERRORPRONE_VERSION   Error Prone core version          (default: 2.50.0)
 #   NULLAWAY_VERSION     NullAway version                  (default: 0.13.7)
@@ -49,10 +52,10 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/gson/speciminout}"
+SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/junit4/speciminout}"
 SPECIMIN_DIR="${SPECIMIN_DIR:-$HOME/Documents/specimin}"
-JAR_PATH="${JAR_PATH:-$HOME/gson-deps}"
-ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-com.google.gson}"
+JAR_PATH="${JAR_PATH:-$HOME/junit-deps}"
+ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-org.junit,junit}"
 NULLAWAY_SEVERITY="${NULLAWAY_SEVERITY:-WARN}"
 ERRORPRONE_VERSION="${ERRORPRONE_VERSION:-2.50.0}"
 NULLAWAY_VERSION="${NULLAWAY_VERSION:-0.13.7}"
@@ -106,13 +109,18 @@ rootProject.name = 'specimin-checker-check'
 EOF
 
     # build.gradle -- NullAway via Error Prone, source set is the slice
-    # itself. JSpecifyMode=false + RequireExplicitNullMarking OFF: gson has
+    # itself. disableAllChecks: only NullAway (re-enabled explicitly below)
+    # runs, exactly as on JUnit's original sources in
+    # GenerateNullAwayWarnings.sh's PROJECT=junit path -- JUnit was never
+    # built with Error Prone, so its default ERROR-level checks could fail a
+    # slice's compile for reasons unrelated to Specimin.
+    # JSpecifyMode=false + RequireExplicitNullMarking OFF: JUnit has
     # no @NullMarked/@NullUnmarked annotations anywhere, so NullAway's
     # JSpecify mode (default since ~0.11, and NULLAWAY_VERSION here is newer
     # than that) would otherwise only emit a "please annotate"
     # RequireExplicitNullMarking advisory instead of actually analyzing the
-    # slice -- see GenerateNullAwayWarnings.sh's PROJECT=gson path, which
-    # applies the same two settings against gson's real sources.
+    # slice -- see GenerateNullAwayWarnings.sh's PROJECT=junit path, which
+    # applies the same settings against JUnit's real sources.
     cat > "$dir/build.gradle" <<EOF
 plugins {
     id 'java'
@@ -143,6 +151,7 @@ sourceSets {
 
 tasks.withType(JavaCompile).configureEach {
     options.errorprone {
+        disableAllChecks = true
         check('NullAway', net.ltgt.gradle.errorprone.CheckSeverity.${NULLAWAY_SEVERITY})
         check('RequireExplicitNullMarking', net.ltgt.gradle.errorprone.CheckSeverity.OFF)
         option('NullAway:AnnotatedPackages', '${ANNOTATED_PACKAGES}')
