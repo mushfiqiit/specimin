@@ -165,10 +165,10 @@ def check_environment() -> str | None:
     if key != raw_key:
         print(f"  !! {key_name} has surrounding whitespace or quotes; using the trimmed value here,")
         print("     but the SDK sends it as-is.")
-    prefix = llm_provider.KEY_PREFIX
-    if prefix and not key.startswith(prefix):
-        print(f"  !! {key_name} does not start with '{prefix}', the prefix of "
-              f"{llm_provider.LABEL} API keys.")
+    prefixes = llm_provider.KEY_PREFIX
+    if prefixes and not key.startswith(prefixes):
+        print(f"  !! {key_name} does not start with {' or '.join(repr(p) for p in prefixes)}, "
+              f"the usual prefix of {llm_provider.LABEL} API keys.")
     return key
 
 
@@ -238,8 +238,13 @@ def pick_alternative(models: list[dict]) -> str | None:
     candidates = [
         m["id"] for m in models
         if m.get("id") and m.get("id") != MODEL and m.get("active", True)
-        and not any(t in m["id"] for t in ("whisper", "tts", "guard", "embed", "orpheus"))
+        and not any(t in m["id"] for t in (
+            "whisper", "tts", "guard", "embed", "orpheus", "safety", "reward",
+            "vision", "vlm", "clip", "parse", "detector", "translate", "code"))
     ]
+    for c in candidates:
+        if "llama" in c and "instruct" in c:
+            return c
     for c in candidates:
         if "llama" in c:
             return c
@@ -260,7 +265,7 @@ def main() -> None:
     status = chat(key, MODEL, f"4. POST /chat/completions with '{MODEL}'")
 
     alt_status, alt = None, None
-    if status == 404 and models:
+    if status in (404, 410) and models:
         alt = pick_alternative(models)
         if alt:
             alt_status = chat(key, alt, f"5. Same tiny request with a listed model: '{alt}'")
@@ -290,6 +295,12 @@ def main() -> None:
         if alt_status == 200:
             print(f"  The key DOES work for chat with '{alt}', so the key is fine; switch")
             print(f"  models, e.g.:  LLM_MODEL={alt} python3 RunLLMInferenceAll.py")
+    elif status == 410:
+        print(f"  410 Gone: '{MODEL}' has been retired by the provider (see 'detail' above")
+        print("  for the end-of-life date). Pick a model from the list in step 2.")
+        if alt_status == 200:
+            print(f"  The key DOES work for chat with '{alt}', so the key is fine; e.g.:")
+            print(f"    LLM_MODEL={alt} python3 RunLLMInferenceAll.py")
     elif status == 429:
         print("  429: rate/usage limit reached -- see the retry-after / x-ratelimit headers above.")
     else:

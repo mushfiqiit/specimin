@@ -9,8 +9,10 @@ the LLM_PROVIDER environment variable:
   nvidia              NVIDIA API catalog (build.nvidia.com), OpenAI-compatible
                       endpoint https://integrate.api.nvidia.com/v1.
                       Key: NVIDIA_API_KEY (an "nvapi-..." key from
-                      build.nvidia.com). Model default:
-                      meta/llama-3.3-70b-instruct. Uses the openai SDK.
+                      build.nvidia.com; Brev "bak-..." keys are accepted
+                      too). Model default: nvidia/llama-3.1-nemotron-70b-
+                      instruct (meta/llama-3.3-70b-instruct reached end of
+                      life on 2026-08-26). Uses the openai SDK.
   openai-compatible   Any OpenAI-compatible server: a model you host yourself
                       (vLLM / Ollama, e.g. on an NVIDIA Brev GPU machine or
                       your Mac), Cerebras, Mistral, OpenRouter, ...
@@ -36,14 +38,18 @@ PRESETS = {
     "groq": {
         "label": "Groq",
         "key_env": "GROQ_API_KEY",
-        "key_prefix": "gsk_",
+        "key_prefix": ("gsk_",),
         "default_model": "llama-3.3-70b-versatile",
     },
     "nvidia": {
         "label": "NVIDIA API catalog",
         "key_env": "NVIDIA_API_KEY",
-        "key_prefix": "nvapi-",
-        "default_model": "meta/llama-3.3-70b-instruct",
+        # build.nvidia.com keys start with nvapi-; Brev (bak-) keys were
+        # observed to work against the API catalog as well.
+        "key_prefix": ("nvapi-", "bak-"),
+        # Closest available successor to meta/llama-3.3-70b-instruct (end of
+        # life 2026-08-26): NVIDIA's instruction-tuned Llama 3.1 70B.
+        "default_model": "nvidia/llama-3.1-nemotron-70b-instruct",
         "base_url": "https://integrate.api.nvidia.com/v1",
     },
     "openai-compatible": {

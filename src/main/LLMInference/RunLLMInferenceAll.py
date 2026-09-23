@@ -57,7 +57,8 @@ SPECIMIN_OUT = pathlib.Path(os.environ.get(
 # no access, unknown model), so the run stops at the first one instead of
 # repeating the same failing request for every folder.
 FATAL_STATUSES = {401: "API key rejected", 403: "access denied",
-                  404: "model not found / no access"}
+                  404: "model not found / no access",
+                  410: "model retired (end of life)"}
 
 # Optional: "low", "medium" or "high" for reasoning models such as
 # openai/gpt-oss-120b. Lower effort uses fewer tokens per slice, so more slices
