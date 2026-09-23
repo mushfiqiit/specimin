@@ -22,7 +22,8 @@ prints everything relevant, without ever printing the full API key:
      request against ONE of those models, to show whether the key works for
      chat at all (so the problem is the model, not the key).
 
-Uses only the Python standard library (urllib), so it works even if the
+Uses only the Python standard library (urllib), plus certifi's CA bundle when
+installed (the groq SDK depends on it), so it works even if the
 groq package itself is the problem, and shows the raw HTTP response.
 
 Usage:
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import os
 import sys
+import ssl
 import json
 import platform
 import urllib.error
@@ -46,6 +48,22 @@ MODEL = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
 BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com").rstrip("/")
 API_ROOT = f"{BASE_URL}/openai/v1"
 TIMEOUT = 60
+
+
+def make_ssl_context() -> tuple[ssl.SSLContext, str]:
+    """Verify HTTPS certificates against the same CA bundle the groq SDK
+    uses (certifi, via httpx) rather than Python's own default store: on
+    macOS, python.org/conda Pythons often have an empty default store, which
+    fails every request with CERTIFICATE_VERIFY_FAILED even though the groq
+    SDK itself connects fine."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where()), f"certifi ({certifi.where()})"
+    except ImportError:
+        return ssl.create_default_context(), "Python default store (certifi not installed)"
+
+
+SSL_CONTEXT, SSL_SOURCE = make_ssl_context()
 
 INTERESTING_HEADERS = [
     "x-request-id",
@@ -81,7 +99,7 @@ def request(method: str, path: str, api_key: str, body: dict | None = None):
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT, context=SSL_CONTEXT) as resp:
             status, headers, raw = resp.status, resp.headers, resp.read()
     except urllib.error.HTTPError as e:
         status, headers, raw = e.code, e.headers, e.read()
@@ -120,6 +138,7 @@ def check_environment() -> str | None:
         print("  groq SDK        : NOT INSTALLED (RunLLMInferenceAll.py needs it: pip install groq)")
     print(f"  GROQ_MODEL      : {MODEL}" + ("" if "GROQ_MODEL" in os.environ else "  (default)"))
     print(f"  API root        : {API_ROOT}")
+    print(f"  CA certificates : {SSL_SOURCE}")
     if "GROQ_BASE_URL" in os.environ:
         print("  !! GROQ_BASE_URL is set -- the groq SDK sends every request there instead of")
         print("     api.groq.com. If that server doesn't serve this model, it answers 404.")
@@ -231,6 +250,9 @@ def main() -> None:
         print("  its environment (same shell? same GROQ_API_KEY / GROQ_BASE_URL?) with this one.")
     elif status is None:
         print("  No HTTP response at all -- a network, proxy or TLS problem, not the model.")
+        print("  If the error above is CERTIFICATE_VERIFY_FAILED, this script could not verify")
+        print("  api.groq.com's certificate with the CA bundle shown under 'CA certificates'.")
+        print("  Install certifi (pip install certifi) and re-run -- the groq SDK uses it too.")
     elif status == 401:
         print("  401: the API key is invalid or revoked. Create a new key in the Groq console.")
     elif status == 403:
