@@ -40,7 +40,35 @@ SPECIMIN_OUT = pathlib.Path(os.environ.get(
 )).expanduser()
 
 # Seconds to wait between Groq requests (free tier: ~30 req/min)
-RATE_LIMIT_DELAY = 3
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+# The Groq model allows 30 requests per minute. Requests are spaced so their
+# START times are at least 60 / MAX_REQUESTS_PER_MINUTE seconds apart, which
+# keeps any 60-second window at or below MAX_REQUESTS_PER_MINUTE requests.
+# The default, 25, leaves a margin under the 30 RPM limit (2.4 s between
+# requests). Override with the GROQ_MAX_RPM environment variable.
+MAX_REQUESTS_PER_MINUTE = float(os.environ.get("GROQ_MAX_RPM", "25"))
+if MAX_REQUESTS_PER_MINUTE <= 0:
+    print("ERROR: GROQ_MAX_RPM must be a positive number.")
+    sys.exit(1)
+MIN_REQUEST_INTERVAL = 60.0 / MAX_REQUESTS_PER_MINUTE
+
+
+class RequestThrottle:
+    """Blocks until at least `interval` seconds have passed since the
+    previous request started."""
+
+    def __init__(self, interval: float) -> None:
+        self.interval = interval
+        self.last_start: float | None = None
+
+    def wait(self) -> None:
+        if self.last_start is not None:
+            remaining = self.interval - (time.monotonic() - self.last_start)
+            if remaining > 0:
+                print(f"    Waiting {remaining:.1f}s (rate limit: "
+                      f"{MAX_REQUESTS_PER_MINUTE:g} requests/min)")
+                time.sleep(remaining)
+        self.last_start = time.monotonic()
 
 # ── Groq client ────────────────────────────────────────────────────────────────
 
@@ -255,6 +283,10 @@ def main() -> None:
         print("(dry-run mode — Groq API will not be called)\n")
 
     successes, failures, skipped = 0, [], []
+    throttle = RequestThrottle(MIN_REQUEST_INTERVAL)
+    if not dry_run:
+        print(f"Rate limit: at most {MAX_REQUESTS_PER_MINUTE:g} requests/min "
+              f"({MIN_REQUEST_INTERVAL:.1f}s between requests)")
 
     for i, folder in enumerate(folders, start=1):
         print(f"\n{'─' * 60}")
@@ -286,6 +318,9 @@ def main() -> None:
             print("    [dry-run — skipped]")
             continue
 
+        # Throttle EVERY request, including ones whose predecessor failed, so
+        # a run of errors (e.g. 429s) can't burst past the limit.
+        throttle.wait()
         try:
             result = call_groq(client, prompt)
         except Exception as e:
@@ -302,8 +337,6 @@ def main() -> None:
 
         successes += 1
 
-        if i < len(folders):
-            time.sleep(RATE_LIMIT_DELAY)
 
     print(f"\n{'═' * 60}")
     print(f"Summary: {successes}/{len(folders)} folder(s) succeeded.")
