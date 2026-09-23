@@ -8,7 +8,7 @@ For every subdirectory in SPECIMIN_OUT (skipping *LLMInferenced folders):
      nullaway-warnings.txt that reproduces the original warning the slice
      was generated for (written by ExtractRootWarning.py). Slices without
      one (the original warning was not reproduced) are skipped.
-  3. Sends prompt to Groq (GROQ_MODEL) to infer the @Nullable/@Nonnull
+  3. Sends prompt to the configured LLM (see llm_provider.py) to infer the @Nullable/@Nonnull
      annotations that fix THAT warning only
   4. Saves null-inference-report.txt inside the source folder
   5. Parses Section C and reconstructs a <folderName>LLMInferenced/ sibling directory
@@ -16,12 +16,15 @@ For every subdirectory in SPECIMIN_OUT (skipping *LLMInferenced folders):
 Usage:
     python3 RunLLMInferenceAll.py            # run all
     python3 RunLLMInferenceAll.py --dry-run  # print prompts only, no API calls
-    GROQ_MODEL=<model id> python3 RunLLMInferenceAll.py   # use another model
+    LLM_MODEL=<model id> python3 RunLLMInferenceAll.py    # use another model
+    LLM_PROVIDER=nvidia python3 RunLLMInferenceAll.py     # NVIDIA API catalog
 
-Environment knobs: GROQ_MODEL, GROQ_MAX_RPM, GROQ_REASONING_EFFORT,
-GROQ_MAX_RETRIES, GROQ_MAX_RETRY_WAIT, SPECIMIN_OUT (see their comments below).
+Provider/model/key settings: see llm_provider.py (LLM_PROVIDER, LLM_MODEL,
+LLM_API_KEY, LLM_BASE_URL; Groq is the default). Other knobs: LLM_MAX_RPM,
+LLM_REASONING_EFFORT, LLM_MAX_RETRIES, LLM_MAX_RETRY_WAIT (older GROQ_* names
+still work) and SPECIMIN_OUT -- see their comments below.
 
-If Groq calls fail, run DiagnoseGroq.py first.
+If API calls fail, run DiagnoseGroq.py (works for every provider) first.
 
 SPECIMIN_OUT can be overridden with the environment variable of the same name
 (default: the JUnit 4 slices written by
@@ -37,7 +40,8 @@ import time
 import shutil
 import pathlib
 from AddNonnullImport import ensure_imports
-from groq import Groq
+import llm_provider
+from llm_provider import MODEL, setting
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SPECIMIN_OUT = pathlib.Path(os.environ.get(
@@ -46,9 +50,8 @@ SPECIMIN_OUT = pathlib.Path(os.environ.get(
 )).expanduser()
 
 # ── Model ──────────────────────────────────────────────────────────────────────
-# Override with the GROQ_MODEL environment variable. Run DiagnoseGroq.py to see
-# which models your GROQ_API_KEY can use.
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+# Provider, model and key come from llm_provider.py (LLM_PROVIDER, LLM_MODEL,
+# ...). Run DiagnoseGroq.py to see which models your key can use.
 
 # HTTP statuses that will fail identically for every remaining slice (bad key,
 # no access, unknown model), so the run stops at the first one instead of
@@ -60,29 +63,29 @@ FATAL_STATUSES = {401: "API key rejected", 403: "access denied",
 # openai/gpt-oss-120b. Lower effort uses fewer tokens per slice, so more slices
 # fit in the per-minute token limit. Unset = the model's default (sent only
 # when set, because non-reasoning models reject the parameter).
-GROQ_REASONING_EFFORT = os.environ.get("GROQ_REASONING_EFFORT", "").strip()
+REASONING_EFFORT = setting("REASONING_EFFORT", "")
 
 # ── Retries ────────────────────────────────────────────────────────────────────
-# Groq answers 429 when a per-minute request or TOKEN limit is hit (e.g. 8,000
-# tokens/min for openai/gpt-oss-120b on the free tier -- only ~2 slices/min),
+# APIs answer 429 when a per-minute request or TOKEN limit is hit (e.g. 8,000
+# tokens/min for openai/gpt-oss-120b on Groq's free tier -- only ~2 slices/min),
 # and 5xx on transient server errors. Such a slice is retried after the wait
-# Groq asks for (retry-after header, x-ratelimit-reset-* headers, or "try again
-# in Xs" in the message), up to GROQ_MAX_RETRIES times. A requested wait longer
-# than GROQ_MAX_RETRY_WAIT seconds (e.g. the daily request quota is used up)
+# the API asks for (retry-after header, x-ratelimit-reset-* headers, or "try
+# again in Xs" in the message), up to LLM_MAX_RETRIES times. A requested wait
+# longer than LLM_MAX_RETRY_WAIT seconds (e.g. a daily quota is used up)
 # stops the run instead of waiting it out.
-GROQ_MAX_RETRIES = int(os.environ.get("GROQ_MAX_RETRIES", "8"))
-GROQ_MAX_RETRY_WAIT = float(os.environ.get("GROQ_MAX_RETRY_WAIT", "300"))
+MAX_RETRIES = int(setting("MAX_RETRIES", "8"))
+MAX_RETRY_WAIT = float(setting("MAX_RETRY_WAIT", "300"))
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 
 # ── Rate limiting ──────────────────────────────────────────────────────────────
-# The Groq model allows 30 requests per minute. Requests are spaced so their
+# Groq's models allow 30 requests per minute. Requests are spaced so their
 # START times are at least 60 / MAX_REQUESTS_PER_MINUTE seconds apart, which
 # keeps any 60-second window at or below MAX_REQUESTS_PER_MINUTE requests.
 # The default, 25, leaves a margin under the 30 RPM limit (2.4 s between
-# requests). Override with the GROQ_MAX_RPM environment variable.
-MAX_REQUESTS_PER_MINUTE = float(os.environ.get("GROQ_MAX_RPM", "25"))
+# requests). Override with LLM_MAX_RPM (or GROQ_MAX_RPM).
+MAX_REQUESTS_PER_MINUTE = float(setting("MAX_RPM", "25"))
 if MAX_REQUESTS_PER_MINUTE <= 0:
-    print("ERROR: GROQ_MAX_RPM must be a positive number.")
+    print("ERROR: LLM_MAX_RPM must be a positive number.")
     sys.exit(1)
 MIN_REQUEST_INTERVAL = 60.0 / MAX_REQUESTS_PER_MINUTE
 
@@ -104,16 +107,12 @@ class RequestThrottle:
                 time.sleep(remaining)
         self.last_start = time.monotonic()
 
-# ── Groq client ────────────────────────────────────────────────────────────────
+# ── API client ─────────────────────────────────────────────────────────────────
 
-def make_client() -> Groq:
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        print("ERROR: GROQ_API_KEY environment variable is not set.")
-        sys.exit(1)
-    # max_retries=0: the SDK would otherwise silently retry 429/5xx itself;
-    # call_groq_with_retries() retries instead, logging each wait.
-    return Groq(api_key=api_key, max_retries=0)
+def make_client():
+    # llm_provider disables the SDK's own silent 429/5xx retries;
+    # call_llm_with_retries() retries instead, logging each wait.
+    return llm_provider.make_client()
 
 
 # ── Java file collection ───────────────────────────────────────────────────────
@@ -221,12 +220,12 @@ Produce the fully annotated version of each file. Rules:
 """
 
 
-# ── Groq API call ──────────────────────────────────────────────────────────────
+# ── LLM API call ───────────────────────────────────────────────────────────────
 
-def call_groq(client: Groq, prompt: str) -> str:
-    extra = {"reasoning_effort": GROQ_REASONING_EFFORT} if GROQ_REASONING_EFFORT else {}
+def call_llm(client, prompt: str) -> str:
+    extra = {"reasoning_effort": REASONING_EFFORT} if REASONING_EFFORT else {}
     response = client.chat.completions.create(
-        model=GROQ_MODEL,
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         **extra,
     )
@@ -247,7 +246,7 @@ _TRY_AGAIN_RE = re.compile(r"try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", re.
 
 
 def parse_duration(text: str) -> float | None:
-    """Seconds in a Groq duration like "7.66s", "622ms", "1m26.4s" or a bare
+    """Seconds in a rate-limit duration like "7.66s", "622ms", "1m26.4s" or a bare
     number of seconds ("12"); None if unparseable."""
     text = text.strip()
     try:
@@ -262,7 +261,7 @@ def parse_duration(text: str) -> float | None:
 
 
 def retry_wait_seconds(e: Exception, attempt: int) -> float:
-    """How long to wait before retrying a failed call: what Groq asked for,
+    """How long to wait before retrying a failed call: what the API asked for,
     plus a 1 s margin, or exponential backoff if it said nothing."""
     headers = getattr(getattr(e, "response", None), "headers", None) or {}
     candidates = []
@@ -287,32 +286,32 @@ class StopRun(Exception):
     """Raised when continuing the run is pointless (e.g. a daily quota)."""
 
 
-def call_groq_with_retries(client: Groq, prompt: str, throttle: "RequestThrottle") -> str:
+def call_llm_with_retries(client, prompt: str, throttle: "RequestThrottle") -> str:
     attempt = 0
     while True:
         # Throttle EVERY request, including retries and ones whose predecessor
         # failed, so a run of errors can't burst past the limit.
         throttle.wait()
         try:
-            return call_groq(client, prompt)
+            return call_llm(client, prompt)
         except Exception as e:  # noqa: BLE001 -- inspect whatever the SDK raised
             status = getattr(e, "status_code", None)
-            if status not in RETRYABLE_STATUSES or attempt >= GROQ_MAX_RETRIES:
+            if status not in RETRYABLE_STATUSES or attempt >= MAX_RETRIES:
                 raise
             wait = retry_wait_seconds(e, attempt)
-            if wait > GROQ_MAX_RETRY_WAIT:
-                raise StopRun(f"Groq asked to wait {wait:.0f}s (> GROQ_MAX_RETRY_WAIT="
-                              f"{GROQ_MAX_RETRY_WAIT:g}s) -- probably a daily quota. "
+            if wait > MAX_RETRY_WAIT:
+                raise StopRun(f"The API asked to wait {wait:.0f}s (> LLM_MAX_RETRY_WAIT="
+                              f"{MAX_RETRY_WAIT:g}s) -- probably a daily quota. "
                               f"Last error: {e}") from e
             attempt += 1
-            print(f"    [RETRY {attempt}/{GROQ_MAX_RETRIES}] HTTP {status} — waiting "
+            print(f"    [RETRY {attempt}/{MAX_RETRIES}] HTTP {status} — waiting "
                   f"{wait:.1f}s before retrying ({str(e)[:160]})")
             time.sleep(wait)
 
 
 def describe_error(e: Exception) -> tuple[int | None, list[str]]:
-    """Returns (http_status_or_None, log lines) for a failed Groq call: the
-    exception type, HTTP status, Groq's request id (quote it to Groq support)
+    """Returns (http_status_or_None, log lines) for a failed API call: the
+    exception type, HTTP status, the request id (quote it to provider support)
     and any rate-limit headers, plus the error message."""
     status = getattr(e, "status_code", None)
     lines = [f"type        : {type(e).__module__}.{type(e).__name__}"]
@@ -335,10 +334,10 @@ def describe_error(e: Exception) -> tuple[int | None, list[str]]:
     return status, lines
 
 
-def check_model_available(client: Groq) -> None:
-    """Before any slice is processed, ask Groq which models this key can use
-    and stop with a clear message if GROQ_MODEL is not one of them."""
-    print(f"Checking that model '{GROQ_MODEL}' is available to this API key ...")
+def check_model_available(client) -> None:
+    """Before any slice is processed, ask the API which models this key can
+    use and stop with a clear message if MODEL is not one of them."""
+    print(f"Checking that model '{MODEL}' is available to this API key ...")
     try:
         listed = client.models.list()
     except Exception as e:  # noqa: BLE001 -- report whatever the SDK raised
@@ -352,14 +351,14 @@ def check_model_available(client: Groq) -> None:
         print("    Continuing without the model check.")
         return
     ids = sorted(m.id for m in getattr(listed, "data", []) if getattr(m, "id", None))
-    if GROQ_MODEL in ids:
-        print(f"    OK — '{GROQ_MODEL}' is available.")
+    if MODEL in ids:
+        print(f"    OK — '{MODEL}' is available.")
         return
-    print(f"    [ERROR] '{GROQ_MODEL}' is not available to this API key.")
+    print(f"    [ERROR] '{MODEL}' is not available to this API key.")
     print(f"    Models this key can use ({len(ids)}):")
     for model_id in ids:
         print(f"      - {model_id}")
-    print("    Pick one and re-run, e.g.:  GROQ_MODEL=<model id> python3 RunLLMInferenceAll.py")
+    print("    Pick one and re-run, e.g.:  LLM_MODEL=<model id> python3 RunLLMInferenceAll.py")
     print("    (DiagnoseGroq.py shows more detail.)")
     sys.exit(1)
 
@@ -449,13 +448,13 @@ def main() -> None:
 
     print(f"Found {len(folders)} folder(s) to process.")
     if dry_run:
-        print("(dry-run mode — Groq API will not be called)\n")
+        print("(dry-run mode — the LLM API will not be called)\n")
 
     successes, failures, skipped = 0, [], []
     throttle = RequestThrottle(MIN_REQUEST_INTERVAL)
     if not dry_run:
-        print(f"Model: {GROQ_MODEL}"
-              + (f"  (reasoning_effort={GROQ_REASONING_EFFORT})" if GROQ_REASONING_EFFORT else ""))
+        print(f"LLM: {llm_provider.describe()}"
+              + (f"  (reasoning_effort={REASONING_EFFORT})" if REASONING_EFFORT else ""))
         throttle.wait()  # the model check is a request too
         check_model_available(client)
         print(f"Rate limit: at most {MAX_REQUESTS_PER_MINUTE:g} requests/min "
@@ -485,14 +484,14 @@ def main() -> None:
             print(f"    Usage ctx  : {len(usage_context.splitlines())} line(s)")
 
         prompt = build_prompt(java_files, root_warning, usage_context)
-        print(f"    Prompt     : {len(prompt):,} chars → Groq {GROQ_MODEL}")
+        print(f"    Prompt     : {len(prompt):,} chars → {llm_provider.LABEL} {MODEL}")
 
         if dry_run:
             print("    [dry-run — skipped]")
             continue
 
         try:
-            result = call_groq_with_retries(client, prompt, throttle)
+            result = call_llm_with_retries(client, prompt, throttle)
         except StopRun as e:
             print(f"    [ERROR] {e}")
             print("\n    Stopping the run. Slices finished so far keep their")
@@ -501,7 +500,7 @@ def main() -> None:
             break
         except Exception as e:  # noqa: BLE001 -- log whatever the SDK raised
             status, lines = describe_error(e)
-            print("    [ERROR] Groq call failed:")
+            print("    [ERROR] LLM call failed:")
             for line in lines:
                 print(f"      {line}")
             failures.append(folder.name)

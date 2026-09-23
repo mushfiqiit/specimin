@@ -2,19 +2,19 @@
 """
 DiagnoseGroq.py
 
-Preliminary experiments to find out why RunLLMInferenceAll.py's Groq calls
-fail (e.g. "404 model_not_found"). Makes at most three tiny API requests and
+Preliminary experiments to find out why RunLLMInferenceAll.py's LLM API calls
+fail (e.g. "404 model_not_found"). Despite its name, it works for every
+provider in llm_provider.py (LLM_PROVIDER=groq, nvidia, openai-compatible). Makes at most three tiny API requests and
 prints everything relevant, without ever printing the full API key:
 
-  1. Environment    -- Python and groq SDK versions, a masked view of
-                       GROQ_API_KEY (length, prefix, stray whitespace/quotes),
-                       GROQ_BASE_URL (the groq SDK sends requests there
-                       instead of api.groq.com when it is set), proxy variables.
+  1. Environment    -- Python and SDK versions, the provider and API root,
+                       a masked view of the API key (length, prefix, stray
+                       whitespace/quotes), proxy variables.
   2. GET /models    -- which models this key can actually use, and whether
-                       GROQ_MODEL is one of them.
-  3. GET /models/<GROQ_MODEL>
-                    -- what Groq says about that one model.
-  4. POST /chat/completions with GROQ_MODEL and a tiny prompt
+                       the configured model is one of them.
+  3. GET /models/<model>
+                    -- what the API says about that one model.
+  4. POST /chat/completions with the configured model and a tiny prompt
                     -- the exact request RunLLMInferenceAll.py makes, reduced
                        to a few tokens, with the full status, error body,
                        request id and rate-limit headers.
@@ -23,15 +23,15 @@ prints everything relevant, without ever printing the full API key:
      chat at all (so the problem is the model, not the key).
 
 Uses only the Python standard library (urllib), plus certifi's CA bundle when
-installed (the groq SDK depends on it), so it works even if the
-groq package itself is the problem, and shows the raw HTTP response.
+installed (the groq and openai SDKs depend on it), so it works even if the
+SDK itself is the problem, and shows the raw HTTP response.
 
 Usage:
-    python3 DiagnoseGroq.py
-    GROQ_MODEL=<model id> python3 DiagnoseGroq.py   # check a different model
+    python3 DiagnoseGroq.py                          # Groq (default)
+    LLM_PROVIDER=nvidia python3 DiagnoseGroq.py      # NVIDIA API catalog
+    LLM_MODEL=<model id> python3 DiagnoseGroq.py     # check a different model
 
-Reads GROQ_API_KEY, GROQ_MODEL (default: RunLLMInferenceAll.py's default)
-and GROQ_BASE_URL (default: https://api.groq.com) from the environment.
+Reads the same settings as RunLLMInferenceAll.py -- see llm_provider.py.
 """
 from __future__ import annotations
 
@@ -43,19 +43,19 @@ import platform
 import urllib.error
 import urllib.request
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
-MODEL = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
-BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com").rstrip("/")
-API_ROOT = f"{BASE_URL}/openai/v1"
+import llm_provider
+
+MODEL = llm_provider.MODEL
+API_ROOT = llm_provider.api_root()
 TIMEOUT = 60
 
 
 def make_ssl_context() -> tuple[ssl.SSLContext, str]:
-    """Verify HTTPS certificates against the same CA bundle the groq SDK
-    uses (certifi, via httpx) rather than Python's own default store: on
+    """Verify HTTPS certificates against the same CA bundle the groq/openai
+    SDKs use (certifi, via httpx) rather than Python's own default store: on
     macOS, python.org/conda Pythons often have an empty default store, which
-    fails every request with CERTIFICATE_VERIFY_FAILED even though the groq
-    SDK itself connects fine."""
+    fails every request with CERTIFICATE_VERIFY_FAILED even though the SDKs
+    themselves connect fine."""
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where()), f"certifi ({certifi.where()})"
@@ -131,32 +131,44 @@ def print_response(status, headers, payload, show_body: bool = True) -> None:
 def check_environment() -> str | None:
     section("1. Environment")
     print(f"  Python          : {sys.version.split()[0]} ({platform.platform()})")
+    sdk = "groq" if llm_provider.PROVIDER == "groq" else "openai"
     try:
-        import groq  # noqa: F401
-        print(f"  groq SDK        : {getattr(groq, '__version__', 'unknown version')}")
+        module = __import__(sdk)
+        print(f"  {sdk + ' SDK':15} : {getattr(module, '__version__', 'unknown version')}")
     except ImportError:
-        print("  groq SDK        : NOT INSTALLED (RunLLMInferenceAll.py needs it: pip install groq)")
-    print(f"  GROQ_MODEL      : {MODEL}" + ("" if "GROQ_MODEL" in os.environ else "  (default)"))
+        print(f"  {sdk + ' SDK':15} : NOT INSTALLED (RunLLMInferenceAll.py needs it: "
+              f"pip install {sdk})")
+    print(f"  Provider        : {llm_provider.PROVIDER} ({llm_provider.LABEL})")
+    print(f"  Model           : {MODEL}")
     print(f"  API root        : {API_ROOT}")
     print(f"  CA certificates : {SSL_SOURCE}")
-    if "GROQ_BASE_URL" in os.environ:
-        print("  !! GROQ_BASE_URL is set -- the groq SDK sends every request there instead of")
-        print("     api.groq.com. If that server doesn't serve this model, it answers 404.")
+    for var in ("GROQ_BASE_URL", "LLM_BASE_URL"):
+        if os.environ.get(var):
+            print(f"  !! {var} is set -- requests go there instead of the provider's default")
+            print("     endpoint. If that server doesn't serve this model, it answers 404.")
+    for error in llm_provider.config_errors():
+        print(f"  !! {error}")
     for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY"):
         if os.environ.get(var):
             print(f"  {var:15} : set (requests go through a proxy)")
 
-    raw_key = os.environ.get("GROQ_API_KEY")
+    key_name = "LLM_API_KEY" if os.environ.get("LLM_API_KEY") else llm_provider.KEY_ENV
+    raw_key = llm_provider.api_key_raw()
     if raw_key is None:
-        print("  GROQ_API_KEY    : NOT SET")
+        if llm_provider.PROVIDER == "openai-compatible":
+            print(f"  {key_name:15} : not set (fine for local servers such as Ollama/vLLM)")
+            return "not-needed"
+        print(f"  {key_name:15} : NOT SET")
         return None
     key = raw_key.strip().strip('"').strip("'")
-    print(f"  GROQ_API_KEY    : {mask(key)}  (length {len(key)})")
+    print(f"  {key_name:15} : {mask(key)}  (length {len(key)})")
     if key != raw_key:
-        print("  !! GROQ_API_KEY has surrounding whitespace or quotes; using the trimmed value here,")
-        print("     but the groq SDK sends it as-is.")
-    if not key.startswith("gsk_"):
-        print("  !! GROQ_API_KEY does not start with 'gsk_', the prefix of Groq API keys.")
+        print(f"  !! {key_name} has surrounding whitespace or quotes; using the trimmed value here,")
+        print("     but the SDK sends it as-is.")
+    prefix = llm_provider.KEY_PREFIX
+    if prefix and not key.startswith(prefix):
+        print(f"  !! {key_name} does not start with '{prefix}', the prefix of "
+              f"{llm_provider.LABEL} API keys.")
     return key
 
 
@@ -179,7 +191,7 @@ def list_models(key: str) -> list[dict] | None:
             flags.append(f"context {m['context_window']}")
         if m.get("owned_by"):
             flags.append(m["owned_by"])
-        marker = "  <== GROQ_MODEL" if m.get("id") == MODEL else ""
+        marker = "  <== configured model" if m.get("id") == MODEL else ""
         print(f"    - {m.get('id')}  ({', '.join(flags)}){marker}")
     ids = {m.get("id") for m in models}
     if MODEL in ids:
@@ -237,7 +249,10 @@ def pick_alternative(models: list[dict]) -> str | None:
 def main() -> None:
     key = check_environment()
     if key is None:
-        print("\nSet GROQ_API_KEY first.")
+        print(f"\nSet {llm_provider.KEY_ENV} first.")
+        sys.exit(1)
+    if not API_ROOT or not MODEL:
+        print("\nFix the settings flagged with !! above first.")
         sys.exit(1)
 
     models = list_models(key)
@@ -253,14 +268,15 @@ def main() -> None:
     section("Summary")
     if status == 200:
         print(f"  '{MODEL}' works with this key. If RunLLMInferenceAll.py still fails, compare")
-        print("  its environment (same shell? same GROQ_API_KEY / GROQ_BASE_URL?) with this one.")
+        print("  its environment (same shell? same LLM_* / API key variables?) with this one.")
     elif status is None:
         print("  No HTTP response at all -- a network, proxy or TLS problem, not the model.")
         print("  If the error above is CERTIFICATE_VERIFY_FAILED, this script could not verify")
-        print("  api.groq.com's certificate with the CA bundle shown under 'CA certificates'.")
-        print("  Install certifi (pip install certifi) and re-run -- the groq SDK uses it too.")
+        print("  the server's certificate with the CA bundle shown under 'CA certificates'.")
+        print("  Install certifi (pip install certifi) and re-run -- the SDKs use it too.")
     elif status == 401:
-        print("  401: the API key is invalid or revoked. Create a new key in the Groq console.")
+        print(f"  401: the API key is invalid or revoked (or not a {llm_provider.LABEL} key).")
+        print("  Create a new key with the provider.")
     elif status == 403:
         print("  403: the key is valid but not allowed to use this model or endpoint")
         print("  (organization/project permissions or account restrictions).")
@@ -270,10 +286,10 @@ def main() -> None:
             print("  key's model list (retired/renamed, or disabled for this org/project).")
         else:
             print(f"  404 although '{MODEL}' appears in the model list -- the model may be")
-            print("  blocked for this key's project, or GROQ_BASE_URL points elsewhere.")
+            print("  blocked for this key's project, or a *_BASE_URL variable points elsewhere.")
         if alt_status == 200:
             print(f"  The key DOES work for chat with '{alt}', so the key is fine; switch")
-            print(f"  models, e.g.:  GROQ_MODEL={alt} python3 RunLLMInferenceAll.py")
+            print(f"  models, e.g.:  LLM_MODEL={alt} python3 RunLLMInferenceAll.py")
     elif status == 429:
         print("  429: rate/usage limit reached -- see the retry-after / x-ratelimit headers above.")
     else:
