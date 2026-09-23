@@ -8,15 +8,21 @@ javax.annotation.Nonnull / javax.annotation.Nullable imports.
 Usage:
     python3 AddNonnullImport.py            # patch all files in place
     python3 AddNonnullImport.py --dry-run  # show what would change
+
+SPECIMIN_OUT can be overridden with the environment variable of the same name
+(default: the JUnit 4 slices written by
+SpeciminPerformanceEvaluation/RunSpeciminAll.py).
 """
 from __future__ import annotations
 
+import os
 import sys
 import pathlib
 
-SPECIMIN_OUT = pathlib.Path(
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out"
-)
+SPECIMIN_OUT = pathlib.Path(os.environ.get(
+    "SPECIMIN_OUT",
+    "/Users/mushfiqurrahmanchowdhury/Documents/junit4/speciminout",
+)).expanduser()
 
 NONNULL_IMPORT = "import javax.annotation.Nonnull;"
 NULLABLE_IMPORT = "import javax.annotation.Nullable;"

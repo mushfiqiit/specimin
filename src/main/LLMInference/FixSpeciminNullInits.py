@@ -6,7 +6,7 @@ Specimin stubs out fields it does not need by initializing them to null, e.g.:
 
     private final Logger logger = null;   ← Specimin artifact
 
-When the original EventBus source declares the field without an initializer:
+When the original JUnit 4 source declares the field without an initializer:
 
     private final Logger logger;          ← original
 
@@ -14,33 +14,46 @@ When the original EventBus source declares the field without an initializer:
 That inference is wrong for the original, and causes spurious NullAway
 dereference warnings after ApplyAnnotations transfers it back.
 
-This script compares each reduced .java file against the original EventBus
+This script compares each reduced .java file against the original JUnit 4
 source and removes the `= null` from any field where the original does not
 have a null initializer.
 
+The original source root for each slice is read from that slice's root.txt
+(written by SpeciminPerformanceEvaluation/RunSpeciminAll.py -- the exact
+--root Specimin was run with); --src-root is only the fallback for a slice
+without one.
+
 Fields that legitimately have `= null` in the original are left untouched.
 
-Insert this step AFTER RunSpeciminAll.py and BEFORE RemoveNullUnmarked.py.
+Insert this step AFTER RunSpeciminAll.py and BEFORE RunLLMInferenceAll.py.
 
 Usage:
     python3 FixSpeciminNullInits.py                          # patch in place
     python3 FixSpeciminNullInits.py --dry-run                # show changes only
     python3 FixSpeciminNullInits.py --verbose                # show all files processed
     python3 FixSpeciminNullInits.py \\
-        --specimin-out /path/to/specimin-out \\
-        --eventbus-src /path/to/EventBus/src
+        --specimin-out /path/to/speciminout \\
+        --src-root /path/to/junit4/src/main/java
+
+SPECIMIN_OUT / JUNIT_SRC_ROOT environment variables override the defaults
+too (the flags win over both).
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 import pathlib
 
 # ── Default paths ──────────────────────────────────────────────────────────────
 
-DEFAULT_SPECIMIN_OUT = "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out"
-DEFAULT_EVENTBUS_SRC = (
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/EventBus/src"
+DEFAULT_SPECIMIN_OUT = os.environ.get(
+    "SPECIMIN_OUT",
+    "/Users/mushfiqurrahmanchowdhury/Documents/junit4/speciminout",
+)
+DEFAULT_SRC_ROOT = os.environ.get(
+    "JUNIT_SRC_ROOT",
+    "/Users/mushfiqurrahmanchowdhury/Documents/junit4/src/main/java",
 )
 
 # ── Regex ──────────────────────────────────────────────────────────────────────
@@ -92,21 +105,37 @@ def fix_null_inits(
     return patched, fixed
 
 
+def slice_src_root(
+    specimin_folder: pathlib.Path, default_root: pathlib.Path
+) -> pathlib.Path:
+    """
+    Return the original source root this slice was generated from: the
+    first line of its root.txt (written by RunSpeciminAll.py), or
+    default_root if the slice has none.
+    """
+    root_file = specimin_folder / "root.txt"
+    if root_file.is_file():
+        lines = root_file.read_text(encoding="utf-8").strip().splitlines()
+        if lines and lines[0].strip():
+            return pathlib.Path(lines[0].strip())
+    return default_root
+
+
 def find_original(
     reduced_file: pathlib.Path,
     specimin_folder: pathlib.Path,
-    eventbus_src: pathlib.Path,
+    src_root: pathlib.Path,
     verbose: bool = False,
 ) -> pathlib.Path | None:
     """
-    Resolve the original EventBus source file for a given reduced file.
+    Resolve the original JUnit 4 source file for a given reduced file.
 
-    Reduced path:  <specimin_folder>/org/greenrobot/eventbus/Foo.java
-    Original path: eventbus_src/org/greenrobot/eventbus/Foo.java
+    Reduced path:  <specimin_folder>/org/junit/runner/Description.java
+    Original path: src_root/org/junit/runner/Description.java
     """
     try:
         rel = reduced_file.relative_to(specimin_folder)
-        original = eventbus_src / rel
+        original = src_root / rel
         if original.exists():
             return original
         if verbose:
@@ -122,10 +151,10 @@ def find_original(
 
 
 def parse_args() -> tuple[pathlib.Path, pathlib.Path, bool, bool]:
-    """Return (specimin_out, eventbus_src, dry_run, verbose)."""
+    """Return (specimin_out, src_root, dry_run, verbose)."""
     args = sys.argv[1:]
-    specimin_out = pathlib.Path(DEFAULT_SPECIMIN_OUT)
-    eventbus_src = pathlib.Path(DEFAULT_EVENTBUS_SRC)
+    specimin_out = pathlib.Path(DEFAULT_SPECIMIN_OUT).expanduser()
+    src_root = pathlib.Path(DEFAULT_SRC_ROOT).expanduser()
     dry_run = False
     verbose = False
 
@@ -139,28 +168,25 @@ def parse_args() -> tuple[pathlib.Path, pathlib.Path, bool, bool]:
         elif a == "--specimin-out" and i + 1 < len(args):
             specimin_out = pathlib.Path(args[i + 1])
             i += 1
-        elif a == "--eventbus-src" and i + 1 < len(args):
-            eventbus_src = pathlib.Path(args[i + 1])
+        elif a == "--src-root" and i + 1 < len(args):
+            src_root = pathlib.Path(args[i + 1])
             i += 1
         i += 1
 
-    return specimin_out, eventbus_src, dry_run, verbose
+    return specimin_out, src_root, dry_run, verbose
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    specimin_out, eventbus_src, dry_run, verbose = parse_args()
+    specimin_out, src_root, dry_run, verbose = parse_args()
 
     print(f"SPECIMIN_OUT : {specimin_out}")
-    print(f"EVENTBUS_SRC : {eventbus_src}")
+    print(f"SRC_ROOT     : {src_root}  (fallback; each slice's root.txt wins)")
 
     if not specimin_out.exists():
         print(f"ERROR: SPECIMIN_OUT not found: {specimin_out}")
-        sys.exit(1)
-    if not eventbus_src.exists():
-        print(f"ERROR: EVENTBUS_SRC not found: {eventbus_src}")
         sys.exit(1)
 
     if dry_run:
@@ -183,13 +209,17 @@ def main() -> None:
 
     for folder in folders:
         print(f"── {folder.name}")
+        folder_root = slice_src_root(folder, src_root)
+        if not folder_root.exists():
+            print(f"   [skip] original source root not found: {folder_root}")
+            continue
         java_files = sorted(folder.rglob("*.java"))
         if verbose:
             print(f"   ({len(java_files)} .java files in this folder)")
 
         for reduced_file in java_files:
             original_file = find_original(
-                reduced_file, folder, eventbus_src, verbose=verbose
+                reduced_file, folder, folder_root, verbose=verbose
             )
             if original_file is None:
                 continue  # stub with no original counterpart

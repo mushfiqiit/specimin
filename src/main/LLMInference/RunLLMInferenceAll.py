@@ -12,6 +12,10 @@ For every subdirectory in SPECIMIN_OUT (skipping *LLMInferenced folders):
 Usage:
     python3 RunLLMInferenceAll.py            # run all
     python3 RunLLMInferenceAll.py --dry-run  # print prompts only, no API calls
+
+SPECIMIN_OUT can be overridden with the environment variable of the same name
+(default: the JUnit 4 slices written by
+SpeciminPerformanceEvaluation/RunSpeciminAll.py, checked by RunCheckerAll.sh).
 """
 from __future__ import annotations
 
@@ -25,9 +29,10 @@ from AddNonnullImport import ensure_imports
 from groq import Groq
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-SPECIMIN_OUT = pathlib.Path(
-    "/Users/mushfiqurrahmanchowdhury/Documents/EventBus/specimin-out"
-)
+SPECIMIN_OUT = pathlib.Path(os.environ.get(
+    "SPECIMIN_OUT",
+    "/Users/mushfiqurrahmanchowdhury/Documents/junit4/speciminout",
+)).expanduser()
 
 # Seconds to wait between Groq requests (free tier: ~30 req/min)
 RATE_LIMIT_DELAY = 3
@@ -53,7 +58,8 @@ def collect_java_files(folder: pathlib.Path) -> dict[str, str]:
 
 
 def read_usage_context(folder: pathlib.Path) -> str:
-    """Read usage-context.txt (written by RunSpeciminAll.py), or '' if absent/empty."""
+    """Read usage-context.txt, or '' if absent/empty. (The JUnit 4 pipeline's
+    RunSpeciminAll.py does not write one, so this is normally ''.)"""
     ctx_file = folder / "usage-context.txt"
     if not ctx_file.exists():
         return ""
@@ -63,7 +69,7 @@ def read_usage_context(folder: pathlib.Path) -> str:
 def read_nullaway_warnings(folder: pathlib.Path) -> str:
     warnings_file = folder / "nullaway-warnings.txt"
     if not warnings_file.exists():
-        return "(nullaway-warnings.txt not found — run RunCheckerAll.sh first)"
+        return "(nullaway-warnings.txt not found — run SpeciminPerformanceEvaluation/RunCheckerAll.sh first)"
     content = warnings_file.read_text(encoding="utf-8").strip()
     if not content:
         return "(nullaway-warnings.txt is empty — no NullAway warnings detected)"
@@ -92,9 +98,9 @@ reduced slice omits. Use them as evidence when deciding annotations.
 """
     return f"""You are a Java null-safety expert working with NullAway and JSpecify annotations.
 
-The Java code below is a Specimin-reduced minimal reproduction of a method originally
-annotated with @NullUnmarked, meaning its nullability was previously unverified.
-The @NullUnmarked annotation has been removed so that NullAway now checks it.
+The Java code below is a Specimin-reduced minimal reproduction of a method or field
+from JUnit 4 for which NullAway reported the warning(s) below. JUnit 4 has no
+nullness annotations, so its nullability was previously unverified.
 
 --- NULLAWAY WARNINGS ---
 
