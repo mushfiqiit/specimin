@@ -8,7 +8,7 @@ For every subdirectory in SPECIMIN_OUT (skipping *LLMInferenced folders):
      nullaway-warnings.txt that reproduces the original warning the slice
      was generated for (written by ExtractRootWarning.py). Slices without
      one (the original warning was not reproduced) are skipped.
-  3. Sends prompt to Groq llama-3.3-70b to infer the @Nullable/@Nonnull
+  3. Sends prompt to Groq (GROQ_MODEL) to infer the @Nullable/@Nonnull
      annotations that fix THAT warning only
   4. Saves null-inference-report.txt inside the source folder
   5. Parses Section C and reconstructs a <folderName>LLMInferenced/ sibling directory
@@ -16,6 +16,9 @@ For every subdirectory in SPECIMIN_OUT (skipping *LLMInferenced folders):
 Usage:
     python3 RunLLMInferenceAll.py            # run all
     python3 RunLLMInferenceAll.py --dry-run  # print prompts only, no API calls
+    GROQ_MODEL=<model id> python3 RunLLMInferenceAll.py   # use another model
+
+If Groq calls fail, run DiagnoseGroq.py first.
 
 SPECIMIN_OUT can be overridden with the environment variable of the same name
 (default: the JUnit 4 slices written by
@@ -39,7 +42,17 @@ SPECIMIN_OUT = pathlib.Path(os.environ.get(
     "/Users/mushfiqurrahmanchowdhury/Documents/junit4/speciminout",
 )).expanduser()
 
-# Seconds to wait between Groq requests (free tier: ~30 req/min)
+# ── Model ──────────────────────────────────────────────────────────────────────
+# Override with the GROQ_MODEL environment variable. Run DiagnoseGroq.py to see
+# which models your GROQ_API_KEY can use.
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# HTTP statuses that will fail identically for every remaining slice (bad key,
+# no access, unknown model), so the run stops at the first one instead of
+# repeating the same failing request for every folder.
+FATAL_STATUSES = {401: "API key rejected", 403: "access denied",
+                  404: "model not found / no access"}
+
 # ── Rate limiting ──────────────────────────────────────────────────────────────
 # The Groq model allows 30 requests per minute. Requests are spaced so their
 # START times are at least 60 / MAX_REQUESTS_PER_MINUTE seconds apart, which
@@ -189,10 +202,64 @@ Produce the fully annotated version of each file. Rules:
 
 def call_groq(client: Groq, prompt: str) -> str:
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.choices[0].message.content
+
+
+def describe_error(e: Exception) -> tuple[int | None, list[str]]:
+    """Returns (http_status_or_None, log lines) for a failed Groq call: the
+    exception type, HTTP status, Groq's request id (quote it to Groq support)
+    and any rate-limit headers, plus the error message."""
+    status = getattr(e, "status_code", None)
+    lines = [f"type        : {type(e).__module__}.{type(e).__name__}"]
+    if status is not None:
+        lines.append(f"HTTP status : {status}")
+    response = getattr(e, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        for name in ("x-request-id", "retry-after", "x-ratelimit-remaining-requests",
+                     "x-ratelimit-reset-requests", "x-ratelimit-remaining-tokens",
+                     "x-ratelimit-reset-tokens"):
+            value = headers.get(name)
+            if value is not None:
+                lines.append(f"{name:12}: {value}")
+    request = getattr(response, "request", None) or getattr(e, "request", None)
+    url = getattr(request, "url", None)
+    if url is not None:
+        lines.append(f"URL         : {url}")
+    lines.append(f"message     : {e}")
+    return status, lines
+
+
+def check_model_available(client: Groq) -> None:
+    """Before any slice is processed, ask Groq which models this key can use
+    and stop with a clear message if GROQ_MODEL is not one of them."""
+    print(f"Checking that model '{GROQ_MODEL}' is available to this API key ...")
+    try:
+        listed = client.models.list()
+    except Exception as e:  # noqa: BLE001 -- report whatever the SDK raised
+        status, lines = describe_error(e)
+        print("    [ERROR] Could not list models:")
+        for line in lines:
+            print(f"      {line}")
+        if status in FATAL_STATUSES:
+            print("    Run DiagnoseGroq.py for details.")
+            sys.exit(1)
+        print("    Continuing without the model check.")
+        return
+    ids = sorted(m.id for m in getattr(listed, "data", []) if getattr(m, "id", None))
+    if GROQ_MODEL in ids:
+        print(f"    OK — '{GROQ_MODEL}' is available.")
+        return
+    print(f"    [ERROR] '{GROQ_MODEL}' is not available to this API key.")
+    print(f"    Models this key can use ({len(ids)}):")
+    for model_id in ids:
+        print(f"      - {model_id}")
+    print("    Pick one and re-run, e.g.:  GROQ_MODEL=<model id> python3 RunLLMInferenceAll.py")
+    print("    (DiagnoseGroq.py shows more detail.)")
+    sys.exit(1)
 
 
 # ── Section C parser / file reconstructor ─────────────────────────────────────
@@ -285,6 +352,9 @@ def main() -> None:
     successes, failures, skipped = 0, [], []
     throttle = RequestThrottle(MIN_REQUEST_INTERVAL)
     if not dry_run:
+        print(f"Model: {GROQ_MODEL}")
+        throttle.wait()  # the model check is a request too
+        check_model_available(client)
         print(f"Rate limit: at most {MAX_REQUESTS_PER_MINUTE:g} requests/min "
               f"({MIN_REQUEST_INTERVAL:.1f}s between requests)")
 
@@ -312,7 +382,7 @@ def main() -> None:
             print(f"    Usage ctx  : {len(usage_context.splitlines())} line(s)")
 
         prompt = build_prompt(java_files, root_warning, usage_context)
-        print(f"    Prompt     : {len(prompt):,} chars → Groq llama-3.3-70b-versatile")
+        print(f"    Prompt     : {len(prompt):,} chars → Groq {GROQ_MODEL}")
 
         if dry_run:
             print("    [dry-run — skipped]")
@@ -323,9 +393,16 @@ def main() -> None:
         throttle.wait()
         try:
             result = call_groq(client, prompt)
-        except Exception as e:
-            print(f"    [ERROR] Groq call failed: {e}")
+        except Exception as e:  # noqa: BLE001 -- log whatever the SDK raised
+            status, lines = describe_error(e)
+            print("    [ERROR] Groq call failed:")
+            for line in lines:
+                print(f"      {line}")
             failures.append(folder.name)
+            if status in FATAL_STATUSES:
+                print(f"\n    Stopping: HTTP {status} ({FATAL_STATUSES[status]}) would fail the same")
+                print("    way for every remaining slice. Run DiagnoseGroq.py to investigate.")
+                break
             continue
 
         report_path = folder / "null-inference-report.txt"
@@ -336,7 +413,6 @@ def main() -> None:
         reconstruct(folder, result)
 
         successes += 1
-
 
     print(f"\n{'═' * 60}")
     print(f"Summary: {successes}/{len(folders)} folder(s) succeeded.")
