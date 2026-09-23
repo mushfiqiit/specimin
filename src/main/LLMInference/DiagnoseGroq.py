@@ -199,7 +199,9 @@ def chat(key: str, model: str, title: str) -> int | None:
     body = {
         "model": model,
         "messages": [{"role": "user", "content": "Reply with the single word OK."}],
-        "max_tokens": 5,
+        # Room for reasoning models (e.g. openai/gpt-oss-*), which spend
+        # tokens thinking before they answer; 5 tokens gave an empty reply.
+        "max_tokens": 512,
         "temperature": 0,
     }
     status, headers, payload = request("POST", "/chat/completions", key, body)
@@ -210,6 +212,10 @@ def chat(key: str, model: str, title: str) -> int | None:
         except (KeyError, IndexError, TypeError):
             reply = payload
         print(f"  Reply       : {reply!r}")
+        usage = payload.get("usage") or {}
+        if usage:
+            print(f"  Tokens      : {usage.get('prompt_tokens')} prompt + "
+                  f"{usage.get('completion_tokens')} completion")
         print(f"  Model used  : {payload.get('model')}")
     else:
         print_response(status, headers, payload)
