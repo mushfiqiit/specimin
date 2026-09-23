@@ -177,6 +177,28 @@ def find_original_warning_file(slice_dir: pathlib.Path) -> pathlib.Path | None:
     return None
 
 
+def find_reproduction(original: Finding, slice_findings: list) -> tuple:
+    """
+    Returns (match, same_line_near_miss): match is the first slice finding
+    that reproduces original (same file name, matching message, different
+    line -- see the module docstring), or None; same_line_near_miss is a
+    same-file, same-message finding on the SAME line (not counted as a
+    reproduction), or None. Also used by LLMInference/ExtractRootWarning.py,
+    so the warning it hands the LLM is exactly the one this script counts as
+    REPRODUCED.
+    """
+    match = None
+    same_line_near_miss = None
+    for f in slice_findings:
+        if f.basename != original.basename or not messages_match(original, f):
+            continue
+        if f.line != original.line:
+            match = f
+            break
+        same_line_near_miss = f  # same file+message, but same line too
+    return match, same_line_near_miss
+
+
 def check_slice(slice_dir: pathlib.Path) -> str:
     """
     Compares one slice folder's warning.txt against its nullaway-warnings.txt
@@ -215,15 +237,7 @@ def check_slice(slice_dir: pathlib.Path) -> str:
         lines.append("\nVERDICT: NOT REPRODUCED -- no NullAway warnings found in this slice")
         return "\n".join(lines) + "\n"
 
-    match = None
-    same_line_near_miss = None
-    for f in slice_findings:
-        if f.basename != original.basename or not messages_match(original, f):
-            continue
-        if f.line != original.line:
-            match = f
-            break
-        same_line_near_miss = f  # same file+message, but same line too
+    match, same_line_near_miss = find_reproduction(original, slice_findings)
 
     lines.append("")
     if match is not None:

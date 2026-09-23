@@ -4,8 +4,12 @@ RunLLMInferenceAll.py
 
 For every subdirectory in SPECIMIN_OUT (skipping *LLMInferenced folders):
   1. Collects all .java files
-  2. Reads nullaway-warnings.txt
-  3. Sends prompt to Groq llama-3.3-70b to infer @Nullable/@Nonnull annotations
+  2. Reads root-warning.txt -- the ONE warning from the slice's
+     nullaway-warnings.txt that reproduces the original warning the slice
+     was generated for (written by ExtractRootWarning.py). Slices without
+     one (the original warning was not reproduced) are skipped.
+  3. Sends prompt to Groq llama-3.3-70b to infer the @Nullable/@Nonnull
+     annotations that fix THAT warning only
   4. Saves null-inference-report.txt inside the source folder
   5. Parses Section C and reconstructs a <folderName>LLMInferenced/ sibling directory
 
@@ -15,7 +19,8 @@ Usage:
 
 SPECIMIN_OUT can be overridden with the environment variable of the same name
 (default: the JUnit 4 slices written by
-SpeciminPerformanceEvaluation/RunSpeciminAll.py, checked by RunCheckerAll.sh).
+SpeciminPerformanceEvaluation/RunSpeciminAll.py, checked by RunCheckerAll.sh, with
+root-warning.txt written by ExtractRootWarning.py).
 """
 from __future__ import annotations
 
@@ -66,19 +71,24 @@ def read_usage_context(folder: pathlib.Path) -> str:
     return ctx_file.read_text(encoding="utf-8").strip()
 
 
-def read_nullaway_warnings(folder: pathlib.Path) -> str:
-    warnings_file = folder / "nullaway-warnings.txt"
-    if not warnings_file.exists():
-        return "(nullaway-warnings.txt not found — run SpeciminPerformanceEvaluation/RunCheckerAll.sh first)"
-    content = warnings_file.read_text(encoding="utf-8").strip()
-    if not content:
-        return "(nullaway-warnings.txt is empty — no NullAway warnings detected)"
-    return content
+def read_root_warning(folder: pathlib.Path) -> str | None:
+    """
+    Read root-warning.txt (written by ExtractRootWarning.py): the single
+    warning in the slice's nullaway-warnings.txt that reproduces the one the
+    slice was generated for. Returns None if absent or empty -- the original
+    warning was not reproduced in this slice, or ExtractRootWarning.py has
+    not been run.
+    """
+    warning_file = folder / "root-warning.txt"
+    if not warning_file.exists():
+        return None
+    content = warning_file.read_text(encoding="utf-8").strip()
+    return content or None
 
 
 # ── Prompt builder ─────────────────────────────────────────────────────────────
 
-def build_prompt(java_files: dict[str, str], nullaway_warnings: str,
+def build_prompt(java_files: dict[str, str], root_warning: str,
                  usage_context: str = "") -> str:
     sources = "\n\n".join(
         f"// === {name} ===\n{src}" for name, src in java_files.items()
@@ -99,14 +109,18 @@ reduced slice omits. Use them as evidence when deciding annotations.
     return f"""You are a Java null-safety expert working with NullAway and JSpecify annotations.
 
 The Java code below is a Specimin-reduced minimal reproduction of a method or field
-from JUnit 4 for which NullAway reported the warning(s) below. JUnit 4 has no
+from JUnit 4 for which NullAway reported the warning below. JUnit 4 has no
 nullness annotations, so its nullability was previously unverified.
 
---- NULLAWAY WARNINGS ---
+Your goal is to fix THIS ONE warning. The reduced code may produce other NullAway
+warnings (for example, from stubs Specimin generated); ignore them and do not change
+code only to address them.
 
-{nullaway_warnings}
+--- NULLAWAY WARNING TO FIX ---
 
---- END OF NULLAWAY WARNINGS ---
+{root_warning}
+
+--- END OF NULLAWAY WARNING ---
 
 {usage_section}--- REDUCED SOURCE CODE ---
 
@@ -117,24 +131,25 @@ nullness annotations, so its nullability was previously unverified.
 Your task:
 
 A) Annotation decisions
-For every parameter, return type, and field in the code, decide between @Nullable
-and @Nonnull (unannotated/non-null by default under NullAway). Use the NullAway
-warnings to guide decisions — an expression flagged by NullAway as potentially null
-should be @Nullable; everything that is guaranteed non-null should be @Nonnull or
-left unannotated.
+Decide which parameters, return types, and fields involved in the warning above
+should be @Nullable or @Nonnull (unannotated/non-null by default under NullAway)
+so that this warning is resolved. An expression that can really be null should be
+@Nullable; everything that is guaranteed non-null should be @Nonnull or left
+unannotated. Do not annotate locations unrelated to this warning.
 
 Present your decisions as a table:
   location | inferred annotation | one-sentence reason
 
 Use javax.annotation.Nullable and javax.annotation.Nonnull (jsr305).
 
-B) Unsafe dereferences
-List every dereference of a @Nullable value in the code that could throw a
-NullPointerException, cross-referencing the NullAway warnings by line number.
+B) Cause of the warning
+Explain in a few sentences what causes the warning above (the expression and line
+it points to, and why NullAway considers it unsafe), and how your annotations fix it.
 
 C) Corrected annotated code
 Produce the fully annotated version of each file. Rules:
   - Add @Nullable or @Nonnull annotations only — do NOT add if-statement null checks.
+  - Only add/change the annotations needed to fix the warning above.
   - Use javax.annotation.Nullable and javax.annotation.Nonnull imports (jsr305).
   - Preserve all existing logic exactly; only add/change annotations.
   - Output each file preceded by its marker line: // === path/to/File.java ===
@@ -239,7 +254,7 @@ def main() -> None:
     if dry_run:
         print("(dry-run mode — Groq API will not be called)\n")
 
-    successes, failures = 0, []
+    successes, failures, skipped = 0, [], []
 
     for i, folder in enumerate(folders, start=1):
         print(f"\n{'─' * 60}")
@@ -252,14 +267,19 @@ def main() -> None:
 
         print(f"    Java files : {len(java_files)}")
 
-        warnings = read_nullaway_warnings(folder)
-        print(f"    Warnings   : {len(warnings.splitlines())} line(s)")
+        root_warning = read_root_warning(folder)
+        if root_warning is None:
+            print("    [SKIP] No root-warning.txt — original warning not reproduced in this")
+            print("           slice, or ExtractRootWarning.py has not been run.")
+            skipped.append(folder.name)
+            continue
+        print(f"    Warning    : {root_warning}")
 
         usage_context = read_usage_context(folder)
         if usage_context:
             print(f"    Usage ctx  : {len(usage_context.splitlines())} line(s)")
 
-        prompt = build_prompt(java_files, warnings, usage_context)
+        prompt = build_prompt(java_files, root_warning, usage_context)
         print(f"    Prompt     : {len(prompt):,} chars → Groq llama-3.3-70b-versatile")
 
         if dry_run:
@@ -287,6 +307,10 @@ def main() -> None:
 
     print(f"\n{'═' * 60}")
     print(f"Summary: {successes}/{len(folders)} folder(s) succeeded.")
+    if skipped:
+        print(f"Skipped (no root-warning.txt): {len(skipped)}")
+        for name in skipped:
+            print(f"  - {name}")
     if failures:
         print("Failed:")
         for name in failures:
