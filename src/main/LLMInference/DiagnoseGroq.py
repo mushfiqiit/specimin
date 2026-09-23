@@ -281,6 +281,13 @@ def main() -> None:
         print("  Install certifi (pip install certifi) and re-run -- the SDKs use it too.")
     elif status == 401:
         print(f"  401: the API key is invalid or revoked (or not a {llm_provider.LABEL} key).")
+        if models is not None:
+            print("  (GET /models succeeded, but some providers -- e.g. NVIDIA -- answer it")
+            print("  without checking the key, so that does not mean the key is valid.)")
+        prefixes = llm_provider.KEY_PREFIX
+        if prefixes and not key.startswith(prefixes):
+            print(f"  The key does not start with {' or '.join(repr(p) for p in prefixes)} --"
+                  " it is probably a different kind of key.")
         print("  Create a new key with the provider.")
     elif status == 403:
         print("  403: the key is valid but not allowed to use this model or endpoint")
