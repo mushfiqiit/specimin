@@ -471,9 +471,43 @@ public class JavaParserUtil {
   }
 
   /**
+   * Returns the scope of the given field access or method call if that scope is a qualified type
+   * name, such as {@code Outer.Inner} in {@code Outer.Inner.FIELD}, or null otherwise. The scope is
+   * returned as written, which is not necessarily fully qualified: {@code Outer} may be a simple
+   * type name brought into scope by an import or by the enclosing package.
+   *
+   * @param expr the field access or method call
+   * @return the scope if it is a qualified type name, or null
+   */
+  public static @Nullable FieldAccessExpr getQualifiedTypeNameScope(Expression expr) {
+    Expression scope;
+    if (expr.isFieldAccessExpr()) {
+      scope = expr.asFieldAccessExpr().getScope();
+    } else if (expr.isMethodCallExpr() && expr.asMethodCallExpr().hasScope()) {
+      scope = expr.asMethodCallExpr().getScope().get();
+    } else {
+      return null;
+    }
+
+    if (!scope.isFieldAccessExpr()) {
+      return null;
+    }
+
+    FieldAccessExpr qualifiedScope = scope.asFieldAccessExpr();
+    return isAClassPath(qualifiedScope.toString()) || isAQualifiedTypeName(qualifiedScope)
+        ? qualifiedScope
+        : null;
+  }
+
+  /**
    * Returns the FQN if the expression is a reference to a static method or field or null if it
    * isn't one. This method is intended to be used with unsolvable expressions, with which it should
    * always return the correct result.
+   *
+   * <p>If the member's scope is a qualified type name (see {@link
+   * #getQualifiedTypeNameScope(Expression)}), the result is the name as written, and it is fully
+   * qualified only if the source wrote it that way. Callers that need the real FQN must resolve the
+   * scope themselves.
    *
    * @param expr The expression
    * @return The FQN if it is a static member, empty otherwise
@@ -512,7 +546,7 @@ public class JavaParserUtil {
         nameOfScope = scope.asNameExpr().getNameAsString();
       } else if (scope.isFieldAccessExpr()) {
         nameOfScope = scope.asFieldAccessExpr().toString();
-        if (isAClassPath(nameOfScope) || isAQualifiedTypeName(scope.asFieldAccessExpr())) {
+        if (getQualifiedTypeNameScope(expr) != null) {
           return nameOfScope + "." + nameOfExpr;
         }
       } else {
@@ -1431,8 +1465,17 @@ public class JavaParserUtil {
       return callables.get(0);
     }
 
-    List<@Nullable Object> argumentTypes =
-        new ArrayList<>(getArgumentTypesAsResolved(node.getArguments()));
+    List<@Nullable ResolvedType> resolvedArgumentTypes =
+        getArgumentTypesAsResolved(node.getArguments());
+
+    // javac can only have selected a callable that the arguments are assignable to, so whenever any
+    // candidate is definitely applicable, the ones that are only possibly applicable are noise.
+    callables =
+        TriBool.<NodeWithParameters<?>>selectTruest(
+                callables, c -> isApplicable(c, resolvedArgumentTypes))
+            .items();
+
+    List<@Nullable Object> argumentTypes = new ArrayList<>(resolvedArgumentTypes);
 
     for (int i = 0; i < argumentTypes.size(); i++) {
       if (argumentTypes.get(i) == null) {
@@ -1505,7 +1548,7 @@ public class JavaParserUtil {
    */
   private static List<NodeWithParameters<?>> tryResolveConstructorCallWithUnresolvableArguments(
       ObjectCreationExpr constructorCall, Map<String, CompilationUnit> fqnToCompilationUnits) {
-    List<@Nullable ResolvedType> parameterTypes =
+    List<@Nullable ResolvedType> argumentTypes =
         getArgumentTypesAsResolved(constructorCall.getArguments());
 
     TypeDeclaration<?> enclosingClass;
@@ -1524,7 +1567,7 @@ public class JavaParserUtil {
 
     List<NodeWithParameters<?>> candidates = new ArrayList<>();
     if (enclosingClass.isRecordDeclaration()) {
-      if (isNodeWithParametersACandidate(enclosingClass.asRecordDeclaration(), parameterTypes)) {
+      if (isApplicable(enclosingClass.asRecordDeclaration(), argumentTypes) != TriBool.FALSE) {
         candidates.add(enclosingClass.asRecordDeclaration());
       }
     }
@@ -1532,7 +1575,7 @@ public class JavaParserUtil {
     List<ConstructorDeclaration> constructors = new ArrayList<>();
 
     addAllMatchingCallablesToList(
-        enclosingClass, parameterTypes, constructors, null, ConstructorDeclaration.class);
+        enclosingClass, argumentTypes, constructors, null, ConstructorDeclaration.class);
 
     candidates.addAll(constructors);
 
@@ -1551,7 +1594,7 @@ public class JavaParserUtil {
   private static List<ConstructorDeclaration> tryResolveConstructorCallWithUnresolvableArguments(
       ExplicitConstructorInvocationStmt constructorCall,
       Map<String, CompilationUnit> fqnToCompilationUnits) {
-    List<@Nullable ResolvedType> parameterTypes =
+    List<@Nullable ResolvedType> argumentTypes =
         getArgumentTypesAsResolved(constructorCall.getArguments());
 
     TypeDeclaration<?> enclosingClass = getEnclosingClassLike(constructorCall);
@@ -1559,7 +1602,7 @@ public class JavaParserUtil {
 
     if (constructorCall.isThis()) {
       addAllMatchingCallablesToList(
-          enclosingClass, parameterTypes, candidates, null, ConstructorDeclaration.class);
+          enclosingClass, argumentTypes, candidates, null, ConstructorDeclaration.class);
     } else {
       TypeDeclaration<?> parent = null;
 
@@ -1571,7 +1614,7 @@ public class JavaParserUtil {
 
       if (parent != null) {
         addAllMatchingCallablesToList(
-            parent, parameterTypes, candidates, null, ConstructorDeclaration.class);
+            parent, argumentTypes, candidates, null, ConstructorDeclaration.class);
       }
     }
 
@@ -1589,8 +1632,6 @@ public class JavaParserUtil {
    */
   private static List<MethodDeclaration> tryResolveMethodCallWithUnresolvableArguments(
       MethodCallExpr methodCall, Map<String, CompilationUnit> fqnToCompilationUnits) {
-    boolean isSuperOnly = false;
-
     ObjectCreationExpr enclosingAnonymousClass = getEnclosingAnonymousClassIfExists(methodCall);
 
     List<TypeDeclaration<?>> enclosingClass = new ArrayList<>();
@@ -1610,10 +1651,9 @@ public class JavaParserUtil {
     if (methodCall.hasScope()) {
       Expression scope = methodCall.getScope().get();
 
-      if (scope.isSuperExpr()) {
-        isSuperOnly = true;
-      }
-
+      // For a super scope, this is already the type that JLS 15.12.1 says to search (e.g., the
+      // superclass), so unlike in the explicit constructor invocation case, the type itself must
+      // be searched along with its ancestors.
       ResolvedType scopeType = Resolver.calculateResolvedType(scope);
 
       if (scopeType != null) {
@@ -1666,27 +1706,35 @@ public class JavaParserUtil {
       enclosingClass.add(getEnclosingClassLike(methodCall));
     }
 
-    List<@Nullable ResolvedType> parameterTypes =
+    List<@Nullable ResolvedType> argumentTypes =
         getArgumentTypesAsResolved(methodCall.getArguments());
 
+    // The types in enclosingClass can overlap, e.g. an anonymous class's supertype is also the type
+    // of super inside it, as can their ancestors. Searching a type twice would list each of its
+    // methods twice, which tryFindSingleCallableForNodeWithUnresolvableArguments would mistake for
+    // an ambiguous overload. Identity suffices because every declaration here comes from
+    // fqnToCompilationUnits, and it avoids Node#equals, which is structural.
+    Set<TypeDeclaration<?>> searched = Collections.newSetFromMap(new IdentityHashMap<>());
     List<MethodDeclaration> candidates = new ArrayList<>();
     for (TypeDeclaration<?> typeDecl : enclosingClass) {
-      if (!isSuperOnly) {
+      if (searched.add(typeDecl)) {
         addAllMatchingCallablesToList(
             typeDecl,
-            parameterTypes,
+            argumentTypes,
             candidates,
             methodCall.getNameAsString(),
             MethodDeclaration.class);
       }
 
       for (TypeDeclaration<?> ancestor : getAllSolvableAncestors(typeDecl, fqnToCompilationUnits)) {
-        addAllMatchingCallablesToList(
-            ancestor,
-            parameterTypes,
-            candidates,
-            methodCall.getNameAsString(),
-            MethodDeclaration.class);
+        if (searched.add(ancestor)) {
+          addAllMatchingCallablesToList(
+              ancestor,
+              argumentTypes,
+              candidates,
+              methodCall.getNameAsString(),
+              MethodDeclaration.class);
+        }
       }
     }
 
@@ -1700,7 +1748,7 @@ public class JavaParserUtil {
           continue;
         }
 
-        if (isNodeWithParametersACandidate(method, parameterTypes)) {
+        if (isApplicable(method, argumentTypes) != TriBool.FALSE) {
           candidates.add(method);
         }
       }
@@ -1722,7 +1770,7 @@ public class JavaParserUtil {
       tryResolveEnumConstantDeclarationWithUnresolvableArguments(
           EnumConstantDeclaration enumConstant,
           Map<String, CompilationUnit> fqnToCompilationUnits) {
-    List<@Nullable ResolvedType> parameterTypes =
+    List<@Nullable ResolvedType> argumentTypes =
         getArgumentTypesAsResolved(enumConstant.getArguments());
 
     TypeDeclaration<?> enclosingClass;
@@ -1743,7 +1791,7 @@ public class JavaParserUtil {
     List<ConstructorDeclaration> candidates = new ArrayList<>();
 
     addAllMatchingCallablesToList(
-        enclosingClass, parameterTypes, candidates, null, ConstructorDeclaration.class);
+        enclosingClass, argumentTypes, candidates, null, ConstructorDeclaration.class);
 
     return candidates;
   }
@@ -1827,18 +1875,18 @@ public class JavaParserUtil {
   /**
    * Helper method for {@link #tryResolveConstructorCallWithUnresolvableArguments} and {@link
    * #tryResolveMethodCallWithUnresolvableArguments}. Adds all callables (constructors/methods) that
-   * match the given parameterTypes to the output list.
+   * may be applicable to arguments of the given types to the output list.
    *
    * @param typeDecl The type declaration to search through
-   * @param parameterTypes The resolved parameter types. Fully qualified names if resolvable, simple
-   *     names if not, and null if no type could be found at all.
+   * @param argumentTypes The types of the call's arguments, in order; an element is null when that
+   *     argument's type could not be resolved
    * @param result The list to append to
    * @param methodName The method name, if the callable is a method (it is ignored otherwise)
    * @param callableType The type of callable (i.e., ConstructorDeclaration or MethodDeclaration)
    */
   private static <T extends CallableDeclaration<?>> void addAllMatchingCallablesToList(
       TypeDeclaration<?> typeDecl,
-      List<@Nullable ResolvedType> parameterTypes,
+      List<@Nullable ResolvedType> argumentTypes,
       List<T> result,
       @Nullable String methodName,
       Class<T> callableType) {
@@ -1857,30 +1905,37 @@ public class JavaParserUtil {
     }
 
     for (NodeWithParameters<?> nodeWithParameters : callables) {
-      if (isNodeWithParametersACandidate(nodeWithParameters, parameterTypes)) {
+      if (isApplicable(nodeWithParameters, argumentTypes) != TriBool.FALSE) {
         result.add(callableType.cast(nodeWithParameters));
       }
     }
   }
 
   /**
-   * Helper function for {@link #addAllMatchingCallablesToList(TypeDeclaration, List, List, String,
-   * Class)}. Determines whether a given NodeWithParameters is a potential candidate for a given set
-   * of parameter types. That list of parameter types should either contain ResolvedTypes or nulls,
-   * depending on whether that type was originally resolvable or not.
+   * Decides whether a callable that Specimin has an AST for is applicable to a call's arguments by
+   * strict or loose invocation (JLS 15.12.2.2, 15.12.2.3). This is the AST counterpart of {@link
+   * #isApplicable(ResolvedMethodDeclaration, List)}.
    *
-   * @param candidate The potential candidate to check
-   * @param requiredParamTypes The required parameter types
-   * @return True if it is a candidate, false otherwise
+   * <p>An unresolvable argument type or parameter type makes the answer at most {@code MAYBE}, so
+   * {@code TRUE} means that every argument is definitely assignable to its parameter. The answer is
+   * {@code FALSE} when JavaParser cannot resolve a parameter at all, as opposed to only its type,
+   * and the corresponding argument's type is known.
+   *
+   * @param candidate The candidate callable
+   * @param argumentTypes The types of the call's arguments, in order; an element is null when that
+   *     argument's type could not be resolved
+   * @return whether the candidate is applicable to those arguments
    */
-  private static boolean isNodeWithParametersACandidate(
-      NodeWithParameters<?> candidate, List<@Nullable ResolvedType> requiredParamTypes) {
-    if (candidate.getParameters().size() != requiredParamTypes.size()) {
-      return false;
+  private static TriBool isApplicable(
+      NodeWithParameters<?> candidate, List<@Nullable ResolvedType> argumentTypes) {
+    if (candidate.getParameters().size() != argumentTypes.size()) {
+      return TriBool.FALSE;
     }
 
+    TriBool result = TriBool.TRUE;
+
     for (int i = 0; i < candidate.getParameters().size(); i++) {
-      ResolvedType typeInCall = requiredParamTypes.get(i);
+      ResolvedType typeInCall = argumentTypes.get(i);
 
       ResolvedParameterDeclaration resolvedParam = Resolver.resolve(candidate.getParameter(i));
       boolean isParamTypeUnsolved = resolvedParam == null;
@@ -1894,21 +1949,123 @@ public class JavaParserUtil {
           // getType() may throw an UnsolvedSymbolException
         }
 
-        if (typeInCall == null || isParamTypeUnsolved || resolvedParameterType == null) {
+        if (typeInCall == null) {
+          result = result.and(TriBool.MAYBE);
           continue;
         }
 
-        if (isArgumentTypeCompatibleWithParameterType(resolvedParameterType, typeInCall)
-            == TriBool.FALSE) {
+        if (isParamTypeUnsolved || resolvedParameterType == null) {
+          result =
+              result.and(
+                  isArgumentTypeCompatibleWithUnsolvableParameterType(
+                      candidate.getParameter(i).getType(), typeInCall));
+        } else {
+          result =
+              result.and(
+                  isArgumentTypeCompatibleWithParameterType(resolvedParameterType, typeInCall));
+        }
+
+        if (result == TriBool.FALSE) {
+          return TriBool.FALSE;
+        }
+        continue;
+      }
+
+      if (typeInCall != null) {
+        return TriBool.FALSE;
+      }
+      result = result.and(TriBool.MAYBE);
+    }
+
+    return result;
+  }
+
+  /**
+   * Checks whether an argument of a given type can be passed to a parameter whose type cannot be
+   * resolved. The answer is {@code FALSE} only when the parameter's type is a bare class or
+   * interface name and every supertype of the argument's type is known: subtyping between class and
+   * interface types is declared (JLS 4.10.2), so a type that is not among those supertypes is not a
+   * widening reference conversion target (JLS 5.3). A parameter type with type arguments does not
+   * qualify, because raw types (JLS 5.1.9) and wildcards (JLS 4.5.1) can make an argument
+   * compatible without naming the unresolvable type among its supertypes.
+   *
+   * @param parameterType The declared type of the parameter, which cannot be resolved
+   * @param argumentType The argument's type
+   * @return {@code FALSE} if the argument definitely cannot be passed, {@code MAYBE} otherwise
+   */
+  private static TriBool isArgumentTypeCompatibleWithUnsolvableParameterType(
+      Type parameterType, ResolvedType argumentType) {
+    if (!parameterType.isClassOrInterfaceType()
+        || parameterType
+            .findFirst(ClassOrInterfaceType.class, t -> t.getTypeArguments().isPresent())
+            .isPresent()) {
+      return TriBool.MAYBE;
+    }
+
+    return hasOnlySupertypesNotNamed(
+            argumentType, parameterType.asClassOrInterfaceType().getNameAsString())
+        ? TriBool.FALSE
+        : TriBool.MAYBE;
+  }
+
+  /**
+   * Returns true if every supertype of a type can be resolved and none has the given simple name.
+   * The name check guards against JavaParser failing to resolve a name that does denote one of
+   * those supertypes.
+   *
+   * @param type A type
+   * @param simpleName The simple name that no supertype may have
+   * @return true if all supertypes of {@code type} are known and none is named {@code simpleName}
+   */
+  private static boolean hasOnlySupertypesNotNamed(ResolvedType type, String simpleName) {
+    if (type.isTypeVariable()) {
+      // A type variable's direct supertypes are its bounds (JLS 4.10.2).
+      List<Bound> bounds;
+      try {
+        bounds = type.asTypeParameter().getBounds();
+      } catch (UnsolvedSymbolException ex) {
+        return false;
+      }
+      for (Bound bound : bounds) {
+        ResolvedType boundType;
+        try {
+          boundType = bound.getType();
+        } catch (UnsolvedSymbolException ex) {
+          return false;
+        }
+        if (!hasOnlySupertypesNotNamed(boundType, simpleName)) {
           return false;
         }
       }
+      return true;
+    }
 
-      if (isParamTypeUnsolved && typeInCall != null) {
+    if (!type.isReferenceType()) {
+      return false;
+    }
+
+    ResolvedReferenceTypeDeclaration decl =
+        type.asReferenceType().getTypeDeclaration().orElse(null);
+    if (decl == null) {
+      return false;
+    }
+
+    List<ResolvedReferenceType> ancestors;
+    try {
+      ancestors = decl.getAllAncestors();
+    } catch (UnsolvedSymbolException ex) {
+      return false;
+    }
+
+    if (decl.getName().equals(simpleName)) {
+      return false;
+    }
+    for (ResolvedReferenceType ancestor : ancestors) {
+      ResolvedReferenceTypeDeclaration ancestorDecl = ancestor.getTypeDeclaration().orElse(null);
+      if (ancestorDecl == null || ancestorDecl.getName().equals(simpleName)) {
         return false;
       }
     }
-
     return true;
   }
 
@@ -1916,13 +2073,12 @@ public class JavaParserUtil {
    * Checks whether an argument of a given type can be passed to a parameter of a given type, i.e.
    * whether the parameter type is assignable by the argument type (JLS 5.3).
    *
-   * <p>The answer is {@code MAYBE} where {@link ResolvedType#isAssignableBy} cannot be trusted. It
-   * answers false for a type variable or a lambda constraint type even where the assignment is
-   * legal, and Specimin sees both routinely; treating them as incompatible would discard the real
-   * candidate. No bounds are checked in those cases, so a {@code MAYBE} candidate may not truly be
-   * applicable. The answer is also {@code MAYBE} when the argument's type has a supertype that is
-   * not on the source path, unless the supertypes that are on it suffice; see {@link
-   * #isAssignableBy(ResolvedType, ResolvedType)}.
+   * <p>The answer is {@code MAYBE} where a {@code FALSE} from {@link #isAssignableBy(ResolvedType,
+   * ResolvedType)} cannot be trusted. That happens when either type is a type variable (its bounds
+   * can make an assignment legal that JavaParser rejects) or the argument is a lambda constraint
+   * type, and Specimin sees both routinely; treating them as incompatible would discard the real
+   * candidate. The answer is also {@code MAYBE} when the argument's type has a supertype that is
+   * not on the source path, unless the supertypes that are on it suffice.
    *
    * @param parameterType The parameter's type
    * @param argumentType The argument's type
@@ -1949,7 +2105,8 @@ public class JavaParserUtil {
    * A version of {@link ResolvedType#isAssignableBy} that tolerates an incomplete type hierarchy.
    * JavaParser's version enumerates every ancestor of {@code value}'s type, and so throws an {@link
    * UnsolvedSymbolException} if any of them is not on the source path, even when a solvable one
-   * already shows that the assignment is legal.
+   * already shows that the assignment is legal. For a type variable, the ancestors are its bounds
+   * and theirs (JLS 4.10.2), except when {@code target} is itself a type variable.
    *
    * @param target The type being assigned to
    * @param value The type of the value being assigned
@@ -1962,6 +2119,33 @@ public class JavaParserUtil {
     } catch (UnsolvedSymbolException ex) {
       // Some ancestor could not be resolved, so the answer can no longer be FALSE: that ancestor
       // might be a subtype of target. It is still TRUE if an ancestor that can be resolved is.
+    }
+
+    // A type-variable target is not walked through value's bounds: JavaParser answers true for one
+    // without checking its own bounds, and the real answer depends on how it is instantiated or
+    // inferred (JLS 18).
+    if (value.isTypeVariable() && !target.isTypeVariable()) {
+      List<Bound> bounds;
+      try {
+        bounds = value.asTypeParameter().getBounds();
+      } catch (UnsolvedSymbolException ex) {
+        return TriBool.MAYBE;
+      }
+
+      for (Bound bound : bounds) {
+        ResolvedType boundType;
+        try {
+          boundType = bound.getType();
+        } catch (UnsolvedSymbolException ex) {
+          continue;
+        }
+
+        if (isAssignableBy(target, boundType) == TriBool.TRUE) {
+          return TriBool.TRUE;
+        }
+      }
+
+      return TriBool.MAYBE;
     }
 
     if (!value.isReferenceType()) {
@@ -3012,11 +3196,9 @@ public class JavaParserUtil {
    * parameters.
    *
    * <p>This is the {@link ResolvedMethodDeclaration} counterpart of {@link
-   * #isNodeWithParametersACandidate}, which answers the same question about a candidate that
-   * Specimin has an AST for; both decide a single parameter with {@link
-   * #isArgumentTypeCompatibleWithParameterType}. This one additionally distinguishes {@code MAYBE}
-   * from {@code TRUE}, so that a caller choosing a single overload can prefer a candidate that is
-   * definitely applicable.
+   * #isApplicable(NodeWithParameters, List)}, which answers the same question about a candidate
+   * that Specimin has an AST for; both decide a single parameter with {@link
+   * #isArgumentTypeCompatibleWithParameterType}.
    *
    * <p>An argument whose type could not be resolved, or a parameter whose type is off the source
    * path, makes the method inapplicable: applicability cannot be established without both types.
