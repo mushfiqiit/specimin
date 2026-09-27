@@ -4,7 +4,7 @@ DiagnoseGroq.py
 
 Preliminary experiments to find out why RunLLMInferenceAll.py's LLM API calls
 fail (e.g. "404 model_not_found"). Despite its name, it works for every
-provider in llm_provider.py (LLM_PROVIDER=groq, nvidia, openai-compatible). Makes at most three tiny API requests and
+provider in llm_provider.py (LLM_PROVIDER=groq, nvidia, openai-compatible, vllm). Makes at most three tiny API requests and
 prints everything relevant, without ever printing the full API key:
 
   1. Environment    -- Python and SDK versions, the provider and API root,
@@ -29,6 +29,7 @@ SDK itself is the problem, and shows the raw HTTP response.
 Usage:
     python3 DiagnoseGroq.py                          # Groq (default)
     LLM_PROVIDER=nvidia python3 DiagnoseGroq.py      # NVIDIA API catalog
+    LLM_PROVIDER=vllm python3 DiagnoseGroq.py        # self-hosted vLLM (127.0.0.1:8000)
     LLM_MODEL=<model id> python3 DiagnoseGroq.py     # check a different model
 
 Reads the same settings as RunLLMInferenceAll.py -- see llm_provider.py.

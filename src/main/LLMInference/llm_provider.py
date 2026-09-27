@@ -19,11 +19,20 @@ the LLM_PROVIDER environment variable:
                       Requires LLM_BASE_URL (e.g. http://localhost:11434/v1
                       for Ollama) and LLM_MODEL. Key: LLM_API_KEY (optional
                       for local servers). Uses the openai SDK.
+  vllm                Self-hosted vLLM server (e.g. Qwen/Qwen3.8-27B served on
+                      an NJIT Wulver GPU node by hpc/run_llm_inference.sbatch).
+                      Defaults: base URL http://127.0.0.1:8000/v1, model
+                      qwen3.8-27b, key "EMPTY" (vLLM without --api-key accepts
+                      any key). Client timeout LLM_TIMEOUT (default 1200 s),
+                      because a reasoning model needs minutes per slice.
+                      Uses the openai SDK.
 
 Common overrides (any provider):
   LLM_MODEL     model id (GROQ_MODEL is still accepted for groq)
   LLM_API_KEY   API key, instead of the provider's own variable
   LLM_BASE_URL  API root ending in /v1 (groq: GROQ_BASE_URL, without /openai/v1)
+  LLM_TIMEOUT   seconds before one request times out (default: the SDK's,
+                or 1200 for vllm)
 
 Other LLM_* knobs used by RunLLMInferenceAll.py (LLM_MAX_RPM,
 LLM_REASONING_EFFORT, LLM_MAX_RETRIES, LLM_MAX_RETRY_WAIT) also accept their
@@ -58,6 +67,18 @@ PRESETS = {
         "key_prefix": None,
         "default_model": None,
         "base_url": None,
+    },
+    "vllm": {
+        "label": "vLLM (self-hosted)",
+        "key_env": "LLM_API_KEY",
+        "key_prefix": None,
+        "default_model": "qwen3.8-27b",
+        "base_url": "http://127.0.0.1:8000/v1",
+        # vLLM started without --api-key accepts any non-empty key.
+        "default_key": "EMPTY",
+        # One slice takes ~3-4 min of generation; with several concurrent
+        # requests it can take longer, so allow well over 900 s.
+        "timeout": 1200.0,
     },
 }
 
@@ -95,8 +116,19 @@ def api_root() -> str | None:
 
 
 def api_key_raw() -> str | None:
-    """The key exactly as set in the environment (LLM_API_KEY wins)."""
-    return os.environ.get("LLM_API_KEY") or os.environ.get(KEY_ENV)
+    """The key exactly as set in the environment (LLM_API_KEY wins), else
+    the preset's default key (vllm: "EMPTY")."""
+    return (os.environ.get("LLM_API_KEY") or os.environ.get(KEY_ENV)
+            or PRESET.get("default_key"))
+
+
+def timeout() -> float | None:
+    """Per-request timeout in seconds: LLM_TIMEOUT, else the preset's, else
+    None (the SDK's default)."""
+    value = setting("TIMEOUT")
+    if value is not None:
+        return float(value)
+    return PRESET.get("timeout")
 
 
 def config_errors() -> list[str]:
@@ -112,7 +144,8 @@ def config_errors() -> list[str]:
 
 
 def describe() -> str:
-    return f"{LABEL} ({api_root()}), model {MODEL}"
+    t = timeout()
+    return f"{LABEL} ({api_root()}), model {MODEL}" + (f", timeout {t:g}s" if t else "")
 
 
 def make_client():
@@ -125,11 +158,14 @@ def make_client():
         sys.exit(1)
     if PROVIDER == "groq":
         from groq import Groq
-        return Groq(api_key=api_key_raw(), max_retries=0)
+        kwargs = {"timeout": timeout()} if timeout() is not None else {}
+        return Groq(api_key=api_key_raw(), max_retries=0, **kwargs)
     try:
         from openai import OpenAI
     except ImportError:
         print(f"ERROR: LLM_PROVIDER={PROVIDER} needs the openai package: pip install openai")
         sys.exit(1)
     # Local servers (Ollama, vLLM) accept any key; the SDK just needs one.
-    return OpenAI(api_key=api_key_raw() or "not-needed", base_url=api_root(), max_retries=0)
+    kwargs = {"timeout": timeout()} if timeout() is not None else {}
+    return OpenAI(api_key=api_key_raw() or "not-needed", base_url=api_root(),
+                  max_retries=0, **kwargs)
