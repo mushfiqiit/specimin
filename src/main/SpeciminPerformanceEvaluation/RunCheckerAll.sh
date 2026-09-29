@@ -52,7 +52,7 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/junit4/speciminout}"
+SPECIMIN_OUT="${SPECIMIN_OUT:-$HOME/Documents/junit4/speciminoutllm}"
 SPECIMIN_DIR="${SPECIMIN_DIR:-$HOME/Documents/specimin}"
 JAR_PATH="${JAR_PATH:-$HOME/junit-deps}"
 ANNOTATED_PACKAGES="${ANNOTATED_PACKAGES:-org.junit,junit}"
