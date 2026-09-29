@@ -215,16 +215,17 @@ repositories {
 }
 
 dependencies {
-    // JUnit 4's only compile-time dependency (see junit4/pom.xml). No
-    // nullness-annotation jars (nullaway-annotations/jsr305/jspecify) are on
-    // the compile classpath: JUnit's sources don't use them, and
-    // nullaway-annotations 0.13.x is published for Java 11+, which Gradle
-    // refuses to resolve against a classpath it targets at Java 8 (derived
-    // from options.release = 8 below) -- "No matching variant of
-    // com.uber.nullaway:nullaway-annotations ... compatible with Java 11 and
-    // the consumer needed a component, compatible with Java 8". This also
-    // keeps copyDeps from copying them into JAR_PATH.
+    // JUnit 4's only compile-time dependency (see junit4/pom.xml).
     implementation       'org.hamcrest:hamcrest-core:1.3'
+    // javax.annotation.Nullable/Nonnull: the original JUnit sources don't use
+    // them, but after ApplyAnnotations merges the LLM-inferred annotations
+    // back in, they do. jsr305 is a plain Java 5 jar, so it resolves against
+    // options.release = 8 (the same dependency RunCheckerAll.sh uses for the
+    // slices). nullaway-annotations/jspecify stay off the classpath:
+    // nullaway-annotations 0.13.x is published for Java 11+, which Gradle
+    // refuses to resolve for a Java 8 target ("No matching variant ...
+    // compatible with Java 8").
+    compileOnly          'com.google.code.findbugs:jsr305:3.0.2'
     errorprone           'com.google.errorprone:error_prone_core:${ERRORPRONE_VERSION}'
     annotationProcessor  'com.uber.nullaway:nullaway:${NULLAWAY_VERSION}'
 }
@@ -255,11 +256,12 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs << '-Xmaxwarns' << '100000'
 }
 
-// Copies JUnit's compile-time dependency jars (hamcrest-core) into JAR_PATH,
-// for Specimin's --jarPath and the slice checks in RunCheckerAll.sh /
-// RunCFCheckerAll.sh.
+// Copies JUnit's dependency jars (hamcrest-core) into JAR_PATH, for
+// Specimin's --jarPath and the slice checks in RunCheckerAll.sh /
+// RunCFCheckerAll.sh. runtimeClasspath, not compileClasspath, so the
+// compileOnly jsr305 jar is not copied (the slice checks add it themselves).
 tasks.register('copyDeps', Copy) {
-    from configurations.compileClasspath
+    from configurations.runtimeClasspath
     into '${JAR_PATH}'
 }
 EOF
