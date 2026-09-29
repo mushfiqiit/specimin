@@ -187,15 +187,13 @@ public final class ApplyAnnotations {
 
     for (int i = 0; i < args.length; i++) {
       String arg = args[i];
-      switch (arg) {
-        case "--dry-run":
-          dryRun = true;
-          continue;
-        case "--skip-nonnull":
-          skipNonnull = true;
-          continue;
-        default:
-          break;
+      if (arg.equals("--dry-run")) {
+        dryRun = true;
+        continue;
+      }
+      if (arg.equals("--skip-nonnull")) {
+        skipNonnull = true;
+        continue;
       }
       if (!Arrays.asList("--specimin-out", "--src-root", "--report", "--on-conflict").contains(arg)) {
         usage("unknown option " + arg);
@@ -208,29 +206,20 @@ public final class ApplyAnnotations {
         return;
       }
       String value = args[++i];
-      switch (arg) {
-        case "--specimin-out":
-          speciminOut = Paths.get(value);
-          break;
-        case "--src-root":
-          srcRoot = value.isEmpty() ? null : Paths.get(value);
-          break;
-        case "--report":
-          report = value.isEmpty() ? null : Paths.get(value);
-          break;
-        case "--on-conflict":
-          try {
-            policy = ConflictPolicy.valueOf(value.toUpperCase(Locale.ROOT));
-          } catch (IllegalArgumentException e) {
-            usage("--on-conflict must be nullable, nonnull or skip, not " + value);
-            System.exit(2);
-            return;
-          }
-          break;
-        default:
-          usage("unknown option " + arg);
+      if (arg.equals("--specimin-out")) {
+        speciminOut = Paths.get(value);
+      } else if (arg.equals("--src-root")) {
+        srcRoot = value.isEmpty() ? null : Paths.get(value);
+      } else if (arg.equals("--report")) {
+        report = value.isEmpty() ? null : Paths.get(value);
+      } else {
+        try {
+          policy = ConflictPolicy.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+          usage("--on-conflict must be nullable, nonnull or skip, not " + value);
           System.exit(2);
           return;
+        }
       }
     }
 
