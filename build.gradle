@@ -81,6 +81,38 @@ tasks.register("requireJavadoc", JavaExec) {
     ]
 }
 
+// Merges the @Nullable/@Nonnull annotations inferred by src/main/LLMInference/RunLLMInferenceAll.py
+// (the *LLMInferenced slice folders) back into the original source tree, e.g. JUnit 4. See
+// ApplyAnnotations.java. Options: -PspeciminOut=<dir> -PsrcRoot=<dir> -PonConflict=nullable|nonnull|skip
+// -PskipNonnull=true -Preport=<file.tsv> -PdryRun=true
+tasks.register("applyAnnotations", JavaExec) {
+    dependsOn("compileJava")
+    group = "nullaway"
+    description = "Merges LLM-inferred null annotations from *LLMInferenced folders into the original source."
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "org.checkerframework.specimin.nullaway.ApplyAnnotations"
+    def cliArgs = [
+        "--specimin-out",
+        project.findProperty("speciminOut")
+            ?: "/Users/mushfiqurrahmanchowdhury/Documents/junit4/speciminoutllm",
+        "--on-conflict",
+        project.findProperty("onConflict") ?: "nullable"
+    ]
+    if (project.hasProperty("srcRoot")) {
+        cliArgs += ["--src-root", project.property("srcRoot")]
+    }
+    if (project.hasProperty("report")) {
+        cliArgs += ["--report", file(project.property("report")).absolutePath]
+    }
+    if (project.findProperty("skipNonnull") == "true") {
+        cliArgs += ["--skip-nonnull"]
+    }
+    if (project.findProperty("dryRun") == "true") {
+        cliArgs += ["--dry-run"]
+    }
+    args = cliArgs
+}
+
 tasks.register("expectedTestOutputsMustCompile", Exec) {
     if (System.getProperty("os.name").toLowerCase().startsWith("windows")) {
         commandLine("cmd", "/c", "typecheck_test_outputs.bat")
