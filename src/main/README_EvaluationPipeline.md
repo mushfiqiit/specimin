@@ -25,6 +25,8 @@ original project ──► GenerateNullAwayWarnings.sh ──► ExtractWarningM
                       ┌────────────────────────── Phase 2: LLMInference ───────────────────────────┐
 copy of slices ──► FixSpeciminNullInits.py ──► RunCheckerAll.sh ──► ExtractRootWarning.py
                                                                          │
+                                                        ExtractUsageContext.py ◄┘
+                                                                         │
                   RunLLMInferenceAll.py (hosted API, or vLLM on an HPC GPU node) ◄┘
                                                                          │
                   ./gradlew applyAnnotations (merge into the original project) ◄┘
@@ -216,6 +218,19 @@ matching rule as `CompareSliceWarnings.py`, which it imports. Slices that don't
 reproduce their warning get no `root-warning.txt` and are skipped by the next
 step. The LLM is shown only this warning, not the side-effect warnings caused
 by stubbing.
+
+### Step 2.3b: usage context for each root warning
+
+```bash
+python3 $LLM/ExtractUsageContext.py
+```
+
+For each slice with a `root-warning.txt`, this finds the field(s)/method(s)
+the warning is about, and collects their declarations and uses from the
+original, full source tree. The original location comes from `warning.txt` and
+the source root from `root.txt`; `--src-root` overrides it. The excerpts are
+written to `usage-context.txt` in that slice's folder, and step 2.4 adds them to
+the prompt. Warnings about local variables get no file.
 
 ### Step 2.4: infer annotations with the LLM
 
@@ -421,6 +436,7 @@ Some baseline warnings can't be fixed with declaration annotations at all:
 | `SpeciminPerformanceEvaluation/CompareSliceWarnings.py` | 1.5 | reproduction verdicts + `summary.txt` |
 | `LLMInference/FixSpeciminNullInits.py` | 2.1 | remove Specimin's `= null` stub initializers |
 | `LLMInference/ExtractRootWarning.py` | 2.3 | `root-warning.txt` for reproducing slices |
+| `LLMInference/ExtractUsageContext.py` | 2.3b | `usage-context.txt`: declarations and uses of the member(s) behind each root warning, from the original source |
 | `LLMInference/RunLLMInferenceAll.py` | 2.4 | prompts the LLM, writes reports and `*LLMInferenced/` |
 | `LLMInference/llm_provider.py` | 2.4 | provider/model/key selection (Groq, NVIDIA, OpenAI-compatible, vLLM) |
 | `LLMInference/AddNonnullImport.py` | 2.4 | adds missing `javax.annotation` imports (library for step 2.4; also a standalone script) |

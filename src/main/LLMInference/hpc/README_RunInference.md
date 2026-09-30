@@ -55,51 +55,36 @@ to run twice.
 ## 2. Generate the usage context (laptop)
 
 `RunLLMInferenceAll.py` adds a slice's `usage-context.txt`, if there is one, to
-the prompt as read-only evidence. That file holds the lines from the original
-program (outside the slice) that assign, dereference, or null-check the fields
-the slice contains. **Nothing on this branch writes that file.** The extractor,
-`ExtractUsageContext.py`, lives on the `LLMInference` branch, together with the
-`ExtractWarningMethods.py` helpers it imports. It works on JUnit slices
-unchanged, as long as `EVENTBUS_SRC_ROOT` points at the JUnit source root.
+the prompt as read-only evidence. `ExtractUsageContext.py` writes it. For each
+slice with a `root-warning.txt`, it:
+1. finds the field(s)/method(s) that root warning is about, from the NullAway
+   message and the warning line. For example: the callee for "passing
+   @Nullable parameter", the enclosing method for "returning @Nullable", the
+   field for "assigning ... to @NonNull field" or "field not initialized", and
+   the dereferenced field or method;
+2. searches the **original, full source tree** for their declarations and
+   uses. The original location comes from the slice's `warning.txt`, and the
+   source root from its `root.txt`;
+3. writes `usage-context.txt` into **that slice's folder**.
 
-Fetch the two files into a separate folder (this doesn't change your checkout):
-
-**[laptop]**
-```bash
-mkdir -p ~/Documents/usage-context-tool
-cd $SPECIMIN_DIR && git fetch origin LLMInference
-for f in ExtractUsageContext.py ExtractWarningMethods.py; do
-  git show origin/LLMInference:src/main/LLMInferencePython/$f > ~/Documents/usage-context-tool/$f
-done
-```
-
-Write `usage-context.txt` for every slice that has a root warning. Point
-`EVENTBUS_SRC_ROOT` at the source the slices were cut from; after a merge
-round, that is the annotated JUnit.
+Warnings about a local variable, and slices without a root warning, get no
+file. A stale file from an earlier run is removed.
 
 **[laptop]**
 ```bash
-export EVENTBUS_SRC_ROOT=$JUNIT_DIR/src/main/java
-cd ~/Documents/usage-context-tool
-for d in "$SPECIMIN_OUT"/*/; do
-  d=${d%/}
-  case "$d" in *LLMInferenced) continue ;; esac
-  [ -f "$d/root-warning.txt" ] || continue
-  python3 ExtractUsageContext.py --slice "$d" > "$d/usage-context.txt"
-  # The extractor prints this placeholder when it finds nothing.
-  # RunLLMInferenceAll.py would put it into the prompt, so delete it.
-  if [ "$(cat "$d/usage-context.txt")" = "(no field usages found)" ]; then
-    rm "$d/usage-context.txt"
-  fi
-done
+python3 $LLM/ExtractUsageContext.py --slice <one slice folder name> --print --dry-run   # inspect one
+python3 $LLM/ExtractUsageContext.py
 
 ls $SPECIMIN_OUT/*/usage-context.txt | wc -l   # slices that will get usage context
 ```
 
-Options: `--scope repo` searches every source file instead of only each
-field's declaring file (more recall, more noise). `--lines N` sets the number
-of context lines around each hit (default 1). The output is capped at 120 lines
-per slice.
+Use the source tree the slices were cut from, i.e. the one the warnings'
+line numbers refer to; after a merge round, that is the annotated JUnit. By
+default this is the path recorded in each `root.txt`. Pass
+`--src-root $JUNIT_DIR/src/main/java` if that path is not valid on this
+machine. Other options: `--context N` sets the lines of context around each
+use (default 1), and `--max-lines N` sets the excerpt lines per slice
+(default 120).
 
 ## 3. Check the prompts locally (laptop, no LLM calls)
 
@@ -234,7 +219,7 @@ warnings, using the comparison script in `README_EvaluationPipeline.md`
 | # | Where | Step | Check |
 |---|---|---|---|
 | 1 | laptop | Fix → RunCheckerAll → ExtractRootWarning | `root-warning.txt` count |
-| 2 | laptop | usage context | `usage-context.txt` count; no placeholder files |
+| 2 | laptop | `ExtractUsageContext.py` | `usage-context.txt` count |
 | 3 | laptop | dry run | prompt count and size |
 | 4 | laptop | rsync to a **new** `$REMOTE_OUT` | the remote folder did not exist |
 | 5 | wulver | counts + dry run | same counts, 0 reports |
