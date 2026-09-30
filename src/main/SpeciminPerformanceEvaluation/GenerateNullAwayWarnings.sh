@@ -136,8 +136,8 @@ if [[ "$PROJECT" == "junit" ]]; then
     GRADLE_DIST_VERSION="${GRADLE_DIST_VERSION:-8.7}"
     BUILD_DIR="${BUILD_DIR:-$JUNIT_DIR/.nullaway-build}"
 
-    REPORT_FILE="$OUT_DIR/nullaway-report.txt"
-    WARN_FILE="$OUT_DIR/nullaway-warnings.txt"
+    REPORT_FILE="$OUT_DIR/nullaway-report_after.txt"
+    WARN_FILE="$OUT_DIR/nullaway-warnings_after.txt"
 
     # ── Preflight ─────────────────────────────────────────────────────────────
     if [[ ! -d "$JUNIT_SRC_ROOT" ]]; then
