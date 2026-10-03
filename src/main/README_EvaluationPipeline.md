@@ -334,6 +334,25 @@ This is the same build as step 1.1, now on the annotated sources, writing to
 `javax.annotation.Nullable` / `Nonnull`. Without it, every annotated file fails
 with `cannot find symbol: class Nullable`, and NullAway never runs.
 
+### Step 2.7b: optional, fix spurious @Nullable
+
+```bash
+python3 $LLM/FixSpuriousNullable.py --warnings $JUNIT_DIR/nullaway-after/nullaway-warnings.txt --dry-run
+python3 $LLM/FixSpuriousNullable.py --warnings $JUNIT_DIR/nullaway-after/nullaway-warnings.txt --verify
+```
+
+For each "dereferenced expression X is @Nullable" warning, this finds the
+declaration behind X: the method return, field, or parameter. If the
+declaration carries a `@Nullable` that nothing in the original source
+justifies, it is rewritten to `@Nonnull`. The source counts as justifying the
+`@Nullable` when the method does `return null` (or returns `Map.get(...)`,
+another `@Nullable` value, ...), when the field is assigned null, or when a
+caller passes a nullable argument. Such declarations are kept and the evidence
+is printed, because flipping them only moves the warning to the `return null`
+or to the caller. Warnings on local variables are reported and skipped.
+`--verify` re-runs NullAway after each flip and keeps it only if the warning
+count goes down. Re-run step 2.7 afterwards.
+
 ### Step 2.8: compare before and after
 
 ```bash
@@ -443,3 +462,4 @@ Some baseline warnings can't be fixed with declaration annotations at all:
 | `LLMInference/DiagnoseGroq.py` | troubleshooting | checks key, model and endpoint for any provider |
 | `LLMInference/hpc/run_llm_inference.sbatch`, `hpc/README.md` | 2.4 on HPC | vLLM + inference as one Slurm job (NJIT Wulver) |
 | `ApplyAnnotations.java` + `./gradlew applyAnnotations` | 2.6 | merge inferred annotations into the original sources |
+| `LLMInference/FixSpuriousNullable.py` | 2.7b | rewrites unjustified `@Nullable` behind dereference warnings to `@Nonnull` (optionally verified with NullAway) |
